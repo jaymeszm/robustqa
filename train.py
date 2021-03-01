@@ -14,6 +14,7 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import RandomSampler, SequentialSampler
 from args import get_train_test_args
+from custom_models import DistilBertForMLMQA
 
 from tqdm import tqdm
 
@@ -256,7 +257,10 @@ def main():
     args = get_train_test_args()
 
     util.set_seed(args.seed)
-    model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
+    if args.model_type == "qa":
+        model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
+    else:
+        model = DistilBertForMLMQA.from_pretrained("distilbert-base-uncased")
     tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
 
     if args.do_train:

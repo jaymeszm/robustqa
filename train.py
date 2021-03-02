@@ -166,7 +166,7 @@ class Trainer():
                 input_ids = batch['input_ids'].to(device)
                 attention_mask = batch['attention_mask'].to(device)
                 batch_size = len(input_ids)
-                outputs = model(input_ids, attention_mask=attention_mask)
+                outputs = model(input_ids, attention_mask=attention_mask, apply_input_mask=False)
                 # Forward
                 start_logits, end_logits = outputs.start_logits, outputs.end_logits
                 # TODO: compute loss
@@ -213,7 +213,7 @@ class Trainer():
                     end_positions = batch['end_positions'].to(device)
                     outputs = model(input_ids, attention_mask=attention_mask,
                                     start_positions=start_positions,
-                                    end_positions=end_positions)
+                                    end_positions=end_positions, apply_input_mask=True)
                     loss = outputs[0]
                     loss.backward()
                     optim.step()

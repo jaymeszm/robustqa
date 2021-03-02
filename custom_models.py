@@ -13,7 +13,6 @@ MASK_PROB = 0.15
 class DistilBertForMLMQA(DistilBertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config) 
-
         self.mask_prob = MASK_PROB
         self.distilbert = DistilBertModel(config)
         self.dummy_param = nn.Parameter(torch.empty(0)) # dummy param to get device later
@@ -38,13 +37,24 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
     def set_output_embeddings(self, new_embeddings):
         self.vocab_projector = new_embeddings
 
+    def mask_input_ids(input_ids):
+        r = torch.randperm(input_ids.size()[0])
+        c = torch.randperm(input_ids.size()[1])
+        input_ids_cpy = input_ids.detach().clone()
+        input_ids_cpy[r][:,c] = 103 # [MASK] token id
+        
+        labels = torch.zeros(input_ids.size()).to(self.dummy_param.device)
+        labels[r][:,c] = -100
+
+        return input_ids_cpy, labels
+
     def forward(
         self,
         input_ids=None, 
         attention_mask=None, 
         head_mask=None, 
         inputs_embeds=None,
-        use_labels=True, # decide on this
+        apply_input_mask=True, # decide on this
         start_positions=None,
         end_positions=None,
         output_attentions=None,
@@ -53,8 +63,14 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
 
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        # for masking
+        input_ids_cpy = input_ids
+        labels=None
+        if apply_input_mask:
+            input_ids_cpy, labels = mask_input_ids(input_ids)
+
         dlbrt_output = self.distilbert(
-                input_ids=input_ids,
+                input_ids=input_ids_cpy
                 attention_mask=attention_mask,
                 head_mask=head_mask,
                 inputs_embeds=inputs_embeds,
@@ -96,10 +112,8 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
             end_loss = loss_fct(end_logits, end_positions)
             qa_loss = (start_loss + end_loss) / 2
 
-        if use_labels:
-            labels = np.random.choice([0,1], size=prediction_logits.size(0)*prediction_logits.size(1), p=[1-self.mask_prob, self.mask_prob])*(-100)
-            labels_torch = torch.from_numpy(labels).to(self.dummy_param.device)
-            mlm_loss = self.mlm_loss_fct(prediction_logits.view(-1, prediction_logits.size(-1)), labels_torch)
+        if apply_input_mask:
+            mlm_loss = self.mlm_loss_fct(prediction_logits.view(-1, prediction_logits.size(-1)), labels.view(-1))
 
         if not return_dict:
             output = (start_logits, end_logits) + dlbrt_output[1:]

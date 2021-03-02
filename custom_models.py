@@ -99,10 +99,6 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
         if use_labels:
             labels = np.random.choice([0,1], size=prediction_logits.size(0)*prediction_logits.size(1), p=[1-self.mask_prob, self.mask_prob])*(-100)
             labels_torch = torch.from_numpy(labels).to(self.dummy_param.device)
-            #print(prediction_logits.size())
-            #print(prediction_logits.view(-1, prediction_logits.size(-1)).size())
-            #print(labels_torch.size())
-            #print(labels_torch.view(-1).size())
             mlm_loss = self.mlm_loss_fct(prediction_logits.view(-1, prediction_logits.size(-1)), labels_torch)
 
         if not return_dict:

@@ -38,13 +38,20 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
         self.vocab_projector = new_embeddings
 
     def mask_input_ids(self, input_ids):
-        r = torch.randperm(input_ids.size()[0])
-        c = torch.randperm(input_ids.size()[1])
-        input_ids_cpy = input_ids.detach().clone()
+        # select random indices so that MASK_PROB number of indices are masked
+        nrow = input_ids.size()[0]
+        ncol = input_ids.size()[1]
+        rc = torch.randint(low=0, high=nrow*ncol, size=int(MASK_PROB*nrow*ncol)
+        r = torch.randint(low=0, high=nrow, size=int(MASK_PROB*nrow*ncol).int()
+        c = torch.floor_divide(rc, c).int()
+
+        input_ids_cpy = input_ids.detach().clone().to(self.dummy_param.device)
         input_ids_cpy[r][:,c] = 103 # [MASK] token id
         
-        labels = torch.zeros(input_ids.size()).to(self.dummy_param.device)
-        labels[r][:,c] = -100
+        # labels are same as original inputs prior to masking, except 
+        #       indices with padding have (0) now have value -100
+        labels = input_ids.detach().clone().to(self.dummy_param.device)
+        labels += ((labels == 0).nonzero() * -100)
 
         return input_ids_cpy, labels
 

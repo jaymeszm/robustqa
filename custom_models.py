@@ -37,7 +37,7 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
     def set_output_embeddings(self, new_embeddings):
         self.vocab_projector = new_embeddings
 
-    def mask_input_ids(input_ids):
+    def mask_input_ids(self, input_ids):
         r = torch.randperm(input_ids.size()[0])
         c = torch.randperm(input_ids.size()[1])
         input_ids_cpy = input_ids.detach().clone()
@@ -67,10 +67,10 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
         input_ids_cpy = input_ids
         labels=None
         if apply_input_mask:
-            input_ids_cpy, labels = mask_input_ids(input_ids)
+            input_ids_cpy, labels = self.mask_input_ids(input_ids)
 
         dlbrt_output = self.distilbert(
-                input_ids=input_ids_cpy
+                input_ids=input_ids_cpy,
                 attention_mask=attention_mask,
                 head_mask=head_mask,
                 inputs_embeds=inputs_embeds,
@@ -95,6 +95,7 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
 
         mlm_loss = None
         qa_loss = None
+        total_loss = None
 
         if start_positions is not None and end_positions is not None:
             # If we are on multi-GPU, split add a dimension
@@ -113,14 +114,17 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
             qa_loss = (start_loss + end_loss) / 2
 
         if apply_input_mask:
-            mlm_loss = self.mlm_loss_fct(prediction_logits.view(-1, prediction_logits.size(-1)), labels.view(-1))
+            mlm_loss = self.mlm_loss_fct(prediction_logits.view(-1, prediction_logits.size(-1)), labels.view(-1).long())
+
+        if mlm_loss is not None and qa_loss is not None:
+            total_loss = mlm_loss + qa_loss
 
         if not return_dict:
             output = (start_logits, end_logits) + dlbrt_output[1:]
-            return ((qa_loss + mlm_loss,) + output) if qa_loss is not None and mlm_loss is not None else output
+            return ((total_loss,) + output) if total_loss is not None else output
         
         return QuestionAnsweringModelOutput(
-            loss=qa_loss+mlm_loss,
+            loss=total_loss,
             start_logits=start_logits,
             end_logits=end_logits,
             hidden_states=dlbrt_output.hidden_states,

@@ -10,12 +10,14 @@ from transformers import DistilBertForQuestionAnswering
 from transformers import AdamW
 from tensorboardX import SummaryWriter
 
-
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import RandomSampler, SequentialSampler
 from args import get_train_test_args
 
 from tqdm import tqdm
+
+
+
 
 def prepare_eval_data(dataset_dict, tokenizer):
     tokenized_examples = tokenizer(dataset_dict['question'],
@@ -246,7 +248,7 @@ def get_dataset(args, datasets, data_dir, tokenizer, split_name):
     dataset_name=''
     for dataset in datasets:
         dataset_name += f'_{dataset}'
-        dataset_dict_curr = util.read_squad(f'{data_dir}/{dataset}')
+        dataset_dict_curr = util.read_squad(f'{data_dir}/{dataset}', split_name)
         dataset_dict = util.merge(dataset_dict, dataset_dict_curr)
     data_encodings = read_and_process(args, tokenizer, dataset_dict, data_dir, dataset_name, split_name)
     return util.QADataset(data_encodings, train=(split_name=='train')), dataset_dict

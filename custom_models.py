@@ -1,8 +1,12 @@
+import torch
 import torch.nn as nn
 import numpy as np
 
 from transformers import DistilBertPreTrainedModel, DistilBertModel
 from transformers import DistilBertConfig
+
+from transformers.activations import gelu
+from transformers.modeling_outputs import QuestionAnsweringModelOutput
 
 MASK_PROB = 0.15
 
@@ -12,6 +16,7 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
 
         self.mask_prob = MASK_PROB
         self.distilbert = DistilBertModel(config)
+        self.dummy_param = nn.Parameter(torch.empty(0)) # dummy param to get device later
 
         # MLM layers
         self.vocab_transform = nn.Linear(config.dim, config.dim)
@@ -39,7 +44,7 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
         attention_mask=None, 
         head_mask=None, 
         inputs_embeds=None,
-        use_labels=False, # decide on this
+        use_labels=True, # decide on this
         start_positions=None,
         end_positions=None,
         output_attentions=None,
@@ -92,9 +97,13 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
             qa_loss = (start_loss + end_loss) / 2
 
         if use_labels:
-            labels = np.random.choice([0,1], size=config.vocab_size, p=[1-self.mask_prob, self.mask_prob])*(-100)
-            labels_torch = torch.from_numpy(labels)
-            mlm_loss = self.mlm_loss_fct(prediction_logits.view(-1, prediction_logits.size(-1)), labels_torch.view(-1))
+            labels = np.random.choice([0,1], size=prediction_logits.size(0)*prediction_logits.size(1), p=[1-self.mask_prob, self.mask_prob])*(-100)
+            labels_torch = torch.from_numpy(labels).to(self.dummy_param.device)
+            #print(prediction_logits.size())
+            #print(prediction_logits.view(-1, prediction_logits.size(-1)).size())
+            #print(labels_torch.size())
+            #print(labels_torch.view(-1).size())
+            mlm_loss = self.mlm_loss_fct(prediction_logits.view(-1, prediction_logits.size(-1)), labels_torch)
 
         if not return_dict:
             output = (start_logits, end_logits) + dlbrt_output[1:]
@@ -105,7 +114,7 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
             start_logits=start_logits,
             end_logits=end_logits,
             hidden_states=dlbrt_output.hidden_states,
-            attentions=dlbrt_output.attensions,
+            attentions=dlbrt_output.attentions,
             )
 
 

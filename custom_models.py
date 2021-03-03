@@ -41,7 +41,7 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
         # select random indices so that MASK_PROB number of indices are masked
         nrow = input_ids.size()[0]
         ncol = input_ids.size()[1]
-        r = torch.randint(low=0, high=nrow, size=(int(MASK_PROB*nrow*ncol),)).long() # start at 1 to avoid zero div 
+        r = torch.randint(low=0, high=nrow, size=(int(MASK_PROB*nrow*ncol),)).long() 
         c = torch.randint(low=0,high=ncol,size=(int(MASK_PROB*nrow*ncol),)).long() 
 
         input_ids_cpy = input_ids.detach().clone().to(self.dummy_param.device)
@@ -49,8 +49,8 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
         
         # labels are same as original inputs prior to masking, except 
         #       indices with padding have (0) now have value -100
-        labels = input_ids.detach().clone().to(self.dummy_param.device)
-        labels += ((labels == 0) * -100).to(self.dummy_param.device)
+        labels = torch.ones(input_ids.size()).to(self.dummy_param.device)*(-100)
+        labels[r][:,c] = input_ids[r][:,c]
 
         return input_ids_cpy, labels
 

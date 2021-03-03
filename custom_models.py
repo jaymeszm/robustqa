@@ -49,7 +49,7 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
         
         # labels are same as original inputs prior to masking, except 
         #       indices with padding have (0) now have value -100
-        labels = torch.ones(input_ids.size()).to(self.dummy_param.device)*(-100)
+        labels = torch.ones(input_ids.size()).long().to(self.dummy_param.device)*(-100)
         labels[r][:,c] = input_ids[r][:,c]
 
         return input_ids_cpy, labels

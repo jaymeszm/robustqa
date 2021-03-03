@@ -186,6 +186,20 @@ class QADataset(Dataset):
     def __len__(self):
         return len(self.encodings['input_ids'])
 
+class MLMDataset(Dataset):
+    def __init__(self, encodings, train=True):
+        self.encodings = encodings
+        self.keys = ['input_ids', 'attention_mask']
+        if train:
+            self.keys += ['labels']
+        assert(all(key in self.encodings for key in self.keys))
+
+    def __getitem__(self, idx):
+        return {key : torch.tensor(self.encodings[key][idx]) for key in self.keys}
+
+    def __len__(self):
+        return len(self.encodings['input_ids'])
+
 def read_squad(path):
     path = Path(path)
     with open(path, 'rb') as f:
@@ -201,7 +215,7 @@ def read_squad(path):
                     data_dict['context'].append(context)
                     data_dict['id'].append(qa['id'])
                 else:
-                    for answer in  qa['answers']:
+                    for answer in qa['answers']:
                         data_dict['question'].append(question)
                         data_dict['context'].append(context)
                         data_dict['id'].append(qa['id'])

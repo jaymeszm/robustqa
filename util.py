@@ -16,7 +16,14 @@ from nltk.corpus import stopwords, wordnet
 from random import choice, shuffle, uniform, randint
 from string import punctuation, digits
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, MarianMTModel, MarianTokenizer
-import mosestokenizer
+
+
+# import mosestokenizer
+
+# download model for English -> Spanish
+# tmp_lang_tokenizer, tmp_lang_model = download('Helsinki-NLP/opus-mt-en-es')
+# download model for Spanish -> English
+# src_lang_tokenizer, src_lang_model = download('Helsinki-NLP/opus-mt-es-en')
 
 
 def set_seed(seed):
@@ -52,7 +59,7 @@ def synonym_replacement(sent):
         random_syn = get_synonyms(str(random.sample(potential_words, 1)))
         if len(random_syn) > 0:
             new_sentence.insert(random.randint(0, len(new_sentence) - 1),
-                                    random_syn[0])
+                                random_syn[0])
     return ' '.join(new_sentence) + " "
 
 
@@ -102,16 +109,14 @@ def download(model_name):
     model = MarianMTModel.from_pretrained(model_name)
     return tokenizer, model
 
+
 def translate(texts, model, tokenizer, language):
     translated = model.generate(**tokenizer.prepare_seq2seq_batch(texts, return_tensors="pt"))
     translated_texts = tokenizer.batch_decode(translated, skip_special_tokens=True)
     return translated_texts
 
+
 def back_translate(texts, language_src, language_dst):
-    # download model for English -> Spanish
-    tmp_lang_tokenizer, tmp_lang_model = download('Helsinki-NLP/opus-mt-en-es')
-    # download model for Spanish -> English
-    src_lang_tokenizer, src_lang_model = download('Helsinki-NLP/opus-mt-es-en')
     translated = translate(texts, tmp_lang_model, tmp_lang_tokenizer, language_dst)
     back_translated = translate(translated, src_lang_model, src_lang_tokenizer, language_src)
     return back_translated
@@ -302,7 +307,8 @@ def read_squad(path, split_name):
     data_dict = {'question': [], 'context': [], 'id': [], 'answer': []}
     augment = False
     if split_name == 'train':
-        n = 2
+        #    n = 2
+        n = 1
         augment = True
     else:
         n = 1
@@ -315,8 +321,8 @@ def read_squad(path, split_name):
                 if augment:
                     augmented = data_augmentation(context, .1)
                     context = augmented
-                if i == 1:
-                    back_translate(context)
+                # if i == 1:
+                #    back_translate(context)
                 # if len(context) < 150:
                 #    context = createSequence(context, model, tokenizer)
                 for qa in passage['qas']:

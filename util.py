@@ -208,8 +208,8 @@ def encode_context_data(tokenizer, dir_name, dataset_name):
                           truncation=True,
                           max_length=512,
                           padding='max_length',
-                          return_special_tokens_mask=True,
-                          return_tensors="pt")
+                          return_special_tokens_mask=True)
+                          # return_tensors="pt")
     cache_path = f'{dir_name}/{dataset_name}_context_encodings.pt'
     save_pickle(encodings, cache_path)
     return encodings

@@ -187,18 +187,62 @@ class QADataset(Dataset):
         return len(self.encodings['input_ids'])
 
 class MLMDataset(Dataset):
-    def __init__(self, encodings, train=True):
+    def __init__(self, encodings):
         self.encodings = encodings
-        self.keys = ['input_ids', 'attention_mask']
-        if train:
-            self.keys += ['labels']
+        self.keys = ['input_ids', 'attention_mask', 'labels']
         assert(all(key in self.encodings for key in self.keys))
 
     def __getitem__(self, idx):
-        return {key : torch.tensor(self.encodings[key][idx]) for key in self.keys}
+        return {key : self.encodings[key][idx] for key in self.keys}
 
     def __len__(self):
         return len(self.encodings['input_ids'])
+
+def encode_context_data(tokenizer, dir_name, dataset_name):
+    """tokenize and save encodings for masked language modeling training"""
+    path = f'{dir_name}/{dataset_name}_context.txt'
+    with open(path) as f:
+        sentences = f.readlines()
+    corpus = [s.strip() for s in sentences]
+    encodings = tokenizer(corpus,
+                          truncation=True,
+                          max_length=512,
+                          padding='max_length',
+                          return_special_tokens_mask=True,
+                          return_tensors="pt")
+    cache_path = f'{dir_name}/{dataset_name}_context_encodings.pt'
+    save_pickle(encodings, cache_path)
+    return encodings
+    # for ids in encodings["input_ids"]:
+    #     print(tokenizer.decode(ids))
+
+def mask_train_data(encodings, tokenizer, mask_prob=0.15):
+    """ Take batch encodings and mask out tokens given by mlm probability """
+    labels = encodings['input_ids'].detach().clone() #a tensor of shape b x seq_length
+    prob_matrix = torch.full_like(labels, mask_prob, dtype=torch.float)
+    # set prob for special tokens to 0
+    prob_matrix.masked_fill_(encodings['special_tokens_mask'] > 0, 0.0)
+    mask_matrix = torch.bernoulli(prob_matrix).bool() # returns boolean matrix of 0 (no mask) and 1 (mask)
+
+    # set all masked tokens to [MASK]
+    encodings['input_ids'][mask_matrix] = tokenizer.mask_token_id
+
+    # set labels for non-masked tokens to -100
+    labels[~mask_matrix] = -100
+    encodings['labels'] = labels
+    return encodings
+
+def save_context(data_dir, datasets, dataset_name):
+    """ Create txt file of contexts from SQuAD formatted datasets """
+    save_path = f'{data_dir}/{dataset_name}' + '_context.txt'
+    with open(Path(save_path), 'w') as context:
+        for dataset in datasets:
+            input = Path(f'{data_dir}/{dataset}')
+            with open(input, 'rb') as f:
+                squad_dict = json.load(f)
+            for group in squad_dict['data']:
+                for passage in group['paragraphs']:
+                    context.write(passage['context'].replace('\n', '')+'\n')
 
 def read_squad(path):
     path = Path(path)

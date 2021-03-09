@@ -193,7 +193,7 @@ class MLMDataset(Dataset):
         assert(all(key in self.encodings for key in self.keys))
 
     def __getitem__(self, idx):
-        return {key : torch.tensor(self.encodings[key][idx]) for key in self.keys}
+        return {key : self.encodings[key][idx].detach().clone() for key in self.keys}
 
     def __len__(self):
         return len(self.encodings['input_ids'])
@@ -208,8 +208,8 @@ def encode_context_data(tokenizer, dir_name, dataset_name):
                           truncation=True,
                           max_length=512,
                           padding='max_length',
-                          return_special_tokens_mask=True)
-                          # return_tensors="pt")
+                          return_special_tokens_mask=True,
+                          return_tensors="pt")
     cache_path = f'{dir_name}/{dataset_name}_context_encodings.pt'
     save_pickle(encodings, cache_path)
     return encodings

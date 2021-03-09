@@ -193,7 +193,7 @@ class MLMDataset(Dataset):
         assert(all(key in self.encodings for key in self.keys))
 
     def __getitem__(self, idx):
-        return {key : self.encodings[key][idx] for key in self.keys}
+        return {key : torch.tensor(self.encodings[key][idx]) for key in self.keys}
 
     def __len__(self):
         return len(self.encodings['input_ids'])

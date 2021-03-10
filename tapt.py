@@ -336,21 +336,24 @@ class MaskedLMTrainer():
                     labels = batch['labels'].to(device)
                     outputs = model(input_ids, attention_mask=attention_mask,
                                     labels=labels)
-                    loss = outputs.loss
+                    loss = outputs[0]
                     loss.backward()
                     optim.step()
                     progress_bar.update(len(input_ids))
                     progress_bar.set_postfix(epoch=epoch_num, NLL=loss.item())
                     tbx.add_scalar('train/NLL', loss.item(), global_idx)
                     if (global_idx % self.eval_every) == 0:
-                        self.log.info(f'Evaluating at step {global_idx}...')
-                        curr_loss = self.evaluate(model, eval_dataloader)
-                        self.log.info('Visualizing in TensorBoard...')
-                        tbx.add_scalar('dev/NLL', loss.item(), global_idx)
-                        self.log.info(f'Masked LM loss {curr_loss}')
-                        if curr_loss <= best_loss:
-                            best_loss = curr_loss
+                        if loss.item() <= best_loss:
+                            best_loss = loss.item()
                             self.save(model)
+                        # self.log.info(f'Evaluating at step {global_idx}...')
+                        # curr_loss = self.evaluate(model, eval_dataloader)
+                        # self.log.info('Visualizing in TensorBoard...')
+                        # tbx.add_scalar('dev/NLL', loss.item(), global_idx)
+                        # self.log.info(f'Masked LM loss {curr_loss}')
+                        # if curr_loss <= best_loss:
+                        #     best_loss = curr_loss
+                        #     self.save(model)
                     global_idx += 1
         return best_loss
 

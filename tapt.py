@@ -304,18 +304,17 @@ class MaskedLMTrainer():
         eval_loss = 0.0
         eval_steps = 0
 
-        with torch.no_grad(), \
-                tqdm(total=len(data_loader.dataset)) as progress_bar:
+        with torch.no_grad(), tqdm(total=len(data_loader.dataset)) as progress_bar:
             for batch in data_loader:
                 input_ids = batch['input_ids'].to(device)
                 attention_mask = batch['attention_mask'].to(device)
                 labels = batch['labels'].to(device)
-                batch_size = len(input_ids)
                 outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
                 # Compute loss
                 loss = outputs[0].item()
                 eval_loss += loss
                 eval_steps += 1
+                progress_bar.update(len(input_ids))
         return eval_loss / eval_steps
 
     def train(self, model, train_dataloader, eval_dataloader):

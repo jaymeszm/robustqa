@@ -324,36 +324,36 @@ class MaskedLMTrainer():
         global_idx = 0
         best_loss = 100.0
         tbx = SummaryWriter(self.save_dir)
+        accumulation_steps = 4
 
         for epoch_num in range(self.num_epochs):
             self.log.info(f'Epoch: {epoch_num}')
             with torch.enable_grad(), tqdm(total=len(train_dataloader.dataset)) as progress_bar:
+                optim.zero_grad()
                 for batch in train_dataloader:
-                    optim.zero_grad()
                     model.train()
                     input_ids = batch['input_ids'].to(device)
                     attention_mask = batch['attention_mask'].to(device)
                     labels = batch['labels'].to(device)
                     outputs = model(input_ids, attention_mask=attention_mask,
                                     labels=labels)
-                    loss = outputs[0]
+                    loss = outputs[0] / accumulation_steps
                     loss.backward()
-                    optim.step()
-                    progress_bar.update(len(input_ids))
-                    progress_bar.set_postfix(epoch=epoch_num, NLL=loss.item())
-                    tbx.add_scalar('train/NLL', loss.item(), global_idx)
-                    if (global_idx % self.eval_every) == 0:
-                        if loss.item() <= best_loss:
-                            best_loss = loss.item()
-                            self.save(model)
-                        # self.log.info(f'Evaluating at step {global_idx}...')
-                        # curr_loss = self.evaluate(model, eval_dataloader)
-                        # self.log.info('Visualizing in TensorBoard...')
-                        # tbx.add_scalar('dev/NLL', loss.item(), global_idx)
-                        # self.log.info(f'Masked LM loss {curr_loss}')
-                        # if curr_loss <= best_loss:
-                        #     best_loss = curr_loss
-                        #     self.save(model)
+                    if (global_idx+1) % accumulation_steps == 0:
+                        optim.step()
+                        optim.zero_grad()
+                        progress_bar.update(len(input_ids) * accumulation_steps)
+                        progress_bar.set_postfix(epoch=epoch_num, NLL=loss.item())
+                        tbx.add_scalar('train/NLL', loss.item(), global_idx)
+                        if (global_idx+1) % self.eval_every == 0:
+                            self.log.info(f'Evaluating at step {global_idx}...')
+                            curr_loss = self.evaluate(model, eval_dataloader)
+                            self.log.info('Visualizing in TensorBoard...')
+                            tbx.add_scalar('dev/NLL', loss.item(), global_idx)
+                            self.log.info(f'Masked LM dev loss {curr_loss}')
+                            if curr_loss <= best_loss:
+                                best_loss = curr_loss
+                                self.save(model)
                     global_idx += 1
         return best_loss
 

@@ -14,6 +14,7 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import RandomSampler, SequentialSampler
 from args import get_train_test_args
+from custom_models import DistilBertForMLMQA
 
 from tqdm import tqdm
 
@@ -165,7 +166,7 @@ class Trainer():
                 input_ids = batch['input_ids'].to(device)
                 attention_mask = batch['attention_mask'].to(device)
                 batch_size = len(input_ids)
-                outputs = model(input_ids, attention_mask=attention_mask)
+                outputs = model(input_ids, attention_mask=attention_mask, apply_input_mask=False)
                 # Forward
                 start_logits, end_logits = outputs.start_logits, outputs.end_logits
                 # TODO: compute loss
@@ -212,7 +213,7 @@ class Trainer():
                     end_positions = batch['end_positions'].to(device)
                     outputs = model(input_ids, attention_mask=attention_mask,
                                     start_positions=start_positions,
-                                    end_positions=end_positions)
+                                    end_positions=end_positions, apply_input_mask=True)
                     loss = outputs[0]
                     loss.backward()
                     optim.step()
@@ -256,7 +257,10 @@ def main():
     args = get_train_test_args()
 
     util.set_seed(args.seed)
-    model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
+    if args.model_type == "qa":
+        model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
+    else:
+        model = DistilBertForMLMQA.from_pretrained("distilbert-base-uncased")
     tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
 
     if args.do_train:

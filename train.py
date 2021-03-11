@@ -118,6 +118,45 @@ def prepare_train_data(dataset_dict, tokenizer):
     return tokenized_examples
 
 
+def mask_train_data(encodings, tokenizer, mask_prob=0.15):
+    """ Take batch encodings and mask out tokens given by mlm probability """
+    labels = encodings['input_ids'].detach().clone() #a tensor of shape b x seq_length
+    prob_matrix = torch.full_like(labels, mask_prob, dtype=torch.float)
+    # set prob for special tokens to 0
+    prob_matrix.masked_fill_(encodings['special_tokens_mask'] > 0, 0.0)
+    mask_matrix = torch.bernoulli(prob_matrix).bool() # returns boolean matrix of 0 (no mask) and 1 (mask)
+
+    # set all masked tokens to [MASK]
+    encodings['input_ids'][mask_matrix] = tokenizer.mask_token_id
+
+    # set labels for non-masked tokens to -100
+    labels[~mask_matrix] = -100
+    encodings['labels'] = labels
+    return encodings
+
+def read_and_process_masked(args, tokenizer, dir_name, datasets):
+    datasets = datasets.split(',')
+    dataset_name=''
+    for dataset in datasets:
+        dataset_name += f'_{dataset}'
+    text_path = f'{dir_name}/{dataset_name}_context.txt'
+    context_cache_path = f'{dir_name}/{dataset_name}_context_encodings.pt'
+    mask_cache_path = f'{dir_name}/{dataset_name}_masked_encodings.pt'
+
+    if os.path.exists(mask_cache_path) and not args.recompute_mlm_features:
+        masked_examples = util.load_pickle(mask_cache_path)
+    else:
+        if os.path.exists(context_cache_path):
+            encodings = util.load_pickle(context_cache_path)
+        else:
+            if os.path.exists(text_path):
+                encodings = util.encode_context_data(tokenizer, dir_name, dataset_name)
+            else:
+                util.save_context(dir_name, datasets, dataset_name)
+                encodings = util.encode_context_data(tokenizer, dir_name, dataset_name)
+        masked_examples = mask_train_data(encodings, tokenizer)
+        util.save_pickle(masked_examples, mask_cache_path)
+    return masked_examples
 
 def read_and_process(args, tokenizer, dataset_dict, dir_name, dataset_name, split):
     #TODO: cache this if possible
@@ -132,6 +171,9 @@ def read_and_process(args, tokenizer, dataset_dict, dir_name, dataset_name, spli
         util.save_pickle(tokenized_examples, cache_path)
     return tokenized_examples
 
+def get_masked_dataset(args, datasets, data_dir, tokenizer):
+    masked_encodings = read_and_process_masked(args, tokenizer, data_dir, datasets)
+    return util.MLMDataset(masked_encodings)
 
 
 #TODO: use a logger, use tensorboard

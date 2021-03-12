@@ -20,32 +20,22 @@ from transformers import MarianMTModel, MarianTokenizer
 import mosestokenizer
 device = "cuda:0"
 
-# download model for English -> Spanish
-#tmp_lang_tokenizer, tmp_lang_model = download('Helsinki-NLP/opus-mt-en-es')
-# download model for Spanish -> English
-#src_lang_tokenizer, src_lang_model = download('Helsinki-NLP/opus-mt-es-en')
-
+qwerty = ' qwertyuiopasdfghjklzxcvbnm'
 
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
-def chunks(lst, n):
-    return [lst[i:i + n] for i in range(0, len(lst), n)]
     
 # taken from eda
 def get_synonyms(word):
-    synonyms = set()
+    synonyms = []
     for syn in wordnet.synsets(word):
-        for l in syn.lemmas():
-            synonym = l.name().replace("_", " ").replace("-", " ").lower()
-            synonym = "".join([char for char in synonym if char in ' qwertyuiopasdfghjklzxcvbnm'])
-            synonyms.add(synonym)
-    if word in synonyms:
-        synonyms.remove(word)
-    return list(synonyms)
+        for pot in syn.lemmas():
+            synonyms.append("".join([char for char in pot.name().replace("_", " ") \
+                                     if char in qwerty]))
+    return synonyms
 
 
 def synonym_replacement(sent):
@@ -66,20 +56,14 @@ def synonym_replacement(sent):
 
 
 def random_swap(sent):
-    chosen_index = []
-    sent = sent.split()
-    sent_pos = [i for i in range(len(sent))]
-    shuffle(sent_pos)
-    for i in range(2):
-        while True:
-            choice_index = choice([i for i in sent_pos])
-            if choice_index not in chosen_index and sent[choice_index]:
-                break
-        chosen_index.append(choice_index)
-    temp0 = sent[chosen_index[0]]
-    temp1 = sent[chosen_index[1]]
-    sent[chosen_index[0]] = temp1
-    sent[chosen_index[1]] = temp0
+    first_index = rand.int(0, len(sent))
+    second_index = rand.int(0, len(sent))
+    if first_index == second_index:
+        second_index = rand.int(0, len(sent))
+    temp = sent[first_index]
+    temp1 = sent[second_index]
+    sent[first_index] = temp1
+    sent[second_index] = temp
     return ' '.join(sent) + " "
 
 
@@ -107,35 +91,27 @@ def createSequence(sentence, model, tokenizer):
 
 
 # Helper function to download data for a language
-def download(model_name, max_len):
-    tokenizer = MarianTokenizer.from_pretrained(model_name)#, batch_size=64, sequence_length=100)
-    model = MarianMTModel.from_pretrained(model_name).to('cuda').half()#batch_size=64, sequence_length=100)
+def download(model_name):
+    tokenizer = MarianTokenizer.from_pretrained(model_name)
+    model = MarianMTModel.from_pretrained(model_name).to('cuda').half()
     model = model.to(device)
     return tokenizer, model
 
-# download model for English -> Spanish                                                               
-tmp_lang_tokenizer, tmp_lang_model = download(f'Helsinki-NLP/opus-mt-en-ROMANCE', max_len=100)                          
-# download model for Spanish -> English
-src_lang_tokenizer, src_lang_model = download(f'Helsinki-NLP/opus-mt-ROMANCE-en', max_len=100)   
+tmp_lang_tokenizer, tmp_lang_model = download(f'Helsinki-NLP/opus-mt-en-ROMANCE')
+src_lang_tokenizer, src_lang_model = download(f'Helsinki-NLP/opus-mt-ROMANCE-en')
 
-def translate(texts, model, tokenizer, language):
+def translate(texts, model, tokenizer):
     translations = []
     my_text = []
     chunks = texts.split()
     per_line = 100
     for i in range(0, len(chunks), per_line):
         my_text.append(" ".join(chunks[i:i + per_line]))
-    #my_text.extend(texts)
-    #print(texts[1:4])
-    #for src_text_list in my_text:
-#        print(src_text_list)
     batch = tokenizer.prepare_seq2seq_batch(my_text, return_tensors="pt")
     batch = batch.to(device)
     translated = model.generate(**batch)
-    #print(tokenizer.batch_decode(translated, skip_special_tokens=True))
     french: List[str]  = tokenizer.batch_decode(translated, skip_special_tokens=True)
     translations.extend(french)
-#        print(french)
     return " ".join(translations)
 
 
@@ -147,26 +123,12 @@ def back_translate(texts, language_src, language_dst):
 def back_translator(context):
     en2de = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.en-fr',
                        tokenizer='moses', bpe='subword_nmt')
-    #en2de.eval()  # disable dropout
-
-    # The underlying model is available under the *models* attribute
-    #assert isinstance(en2de.models[0], fairseq.models.transformer.TransformerModel)
-
-    # Move model to GPU for faster translation
-    #en2de.cuda()
 
     # Batched translation
     translated = [en2de.translate(context[i:(i+1023)]) for i in range(0, len(context) , 1023)]
 
     de2en = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.fr-en',
                        tokenizer='moses', bpe='subword_nmt')
-    #de2en.eval()  # disable dropout                                                                   
-    # The underlying model is available under the *models* attribute                                  
-    #assert isinstance(de2en.models[0], fairseq.models.transformer.TransformerModel)
-
-    # Move model to GPU for faster translation                                                        
-    #de2en.cuda()
-    # ['Hallo Welt!', 'Die Katze saß auf der Matte.']
 
     return [de2en.translate(translated[i:(i+1023)]) for i in range(0, len(translated) , 1023)]
 
@@ -360,7 +322,6 @@ def read_squad(path, split_name):
         augment = True
     else:
         n = 1
-   # tokenizer, model = sentenceCreator()
     for i in range(0, n):
         #if split_name == 'train':
 #        look = sorted(squad_dict['data'],key=lambda x: len(x['paragraphs'][0]['context']))
@@ -370,15 +331,11 @@ def read_squad(path, split_name):
        # print(look)
         for group in look:
             for passage in group['paragraphs']:
-#                print(len(passage['context']))
                 context = passage['context']
                 if augment:
-     #               print(context)
                     augmented = back_translate(context, "en", "fr")
                #     augmented = data_augmentation(context, .1)
                     context = augmented
-      #              print(context)
-                   # print(context)
                #  if i == 1:
                #     context = back_translate(context)
                 # if len(context) < 150:

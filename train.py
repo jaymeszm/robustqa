@@ -295,31 +295,38 @@ class Trainer():
         global_idx = 0
         best_scores = {'F1': -1.0, 'EM': -1.0}
         tbx = SummaryWriter(self.save_dir)
+        print(len(train_dataloader))
+        print(len(masked_train_dl))
 
         for epoch_num in range(self.num_epochs):
             self.log.info(f'Epoch: {epoch_num}')
             with torch.enable_grad(), tqdm(total=len(train_dataloader.dataset)) as progress_bar:
-                for idx_batch, batch in enumerate(train_dataloader):
+                for (mbatch, batch) in zip(masked_train_dl, train_dataloader):
                     optim.zero_grad()
                     model.train()
-                    if (idx_batch % 2 ) != 0:
-                        input_ids = batch['input_ids'].to(device)
-                        attention_mask = batch['attention_mask'].to(device)
-                        start_positions = batch['start_positions'].to(device)
-                        end_positions = batch['end_positions'].to(device)
-                        outputs = model(input_ids, attention_mask=attention_mask,
-                                        start_positions=start_positions,
-                                        end_positions=end_positions, qa=True)
-                    else:
-                        batch = masked_train_dl[idx_batch]
-                        input_ids = batch['input_ids'].to(device)
-                        attention_mask = batch['attention_mask'].to(device)
-                        labels = batch['labels'].to(device)
-                        outputs = model(input_ids, attention_mask=attention_mask,
-                                        labels=labels, qa=False)
+                    # masked/MLM layer
+                    input_ids = mbatch['input_ids'].to(device)
+                    attention_mask = mbatch['attention_mask'].to(device)
+                    labels = mbatch['labels'].to(device)
+                    outputs = model(input_ids, attention_mask=attention_mask,
+                                    labels=labels, qa=False)
+                    # backward
+                    loss = outputs[0]
+                    loss.backward()
+                    optim.step()
+
+                    # unmasked/QA layer
+                    input_ids = batch['input_ids'].to(device)
+                    attention_mask = batch['attention_mask'].to(device)
+                    start_positions = batch['start_positions'].to(device)
+                    end_positions = batch['end_positions'].to(device)
+                    outputs = model(input_ids, attention_mask=attention_mask,
+                                    start_positions=start_positions,
+                                    end_positions=end_positions, qa=True)
                                    
                     loss = outputs[0]
                     loss.backward()
+
                     optim.step()
                     progress_bar.update(len(input_ids))
                     progress_bar.set_postfix(epoch=epoch_num, NLL=loss.item())
@@ -382,7 +389,7 @@ def main():
         if args.model_type == "mlm_qa_alt":
             masked_train_dataset = get_masked_dataset(args, args.train_datasets, args.train_dir, tokenizer)
 
-            train_masked_loader = DataLoader(train_dataset,
+            train_masked_loader = DataLoader(masked_train_dataset,
                                     batch_size=args.batch_size,
                                     sampler=RandomSampler(train_dataset))
         log.info("Preparing Validation Data...")

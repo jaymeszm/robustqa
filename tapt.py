@@ -343,7 +343,7 @@ class MaskedLMTrainer():
                     if (global_idx+1) % self.accumulation_steps == 0:
                         optim.step()
                         optim.zero_grad()
-                        progress_bar.update(len(input_ids) * accumulation_steps)
+                        progress_bar.update(len(input_ids) * self.accumulation_steps)
                         progress_bar.set_postfix(epoch=epoch_num, NLL=loss.item())
                         tbx.add_scalar('train/NLL', loss.item(), global_idx)
                         if (global_idx+1) % self.eval_every == 0:

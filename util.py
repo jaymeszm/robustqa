@@ -15,15 +15,15 @@ from torch.utils.data import Dataset
 from nltk.corpus import stopwords, wordnet
 from random import choice, shuffle, uniform, randint
 from string import punctuation, digits
-from transformers import GPT2LMHeadModel, GPT2Tokenizer, MarianMTModel, MarianTokenizer
+from transformers import MarianMTModel, MarianTokenizer
 
-
-# import mosestokenizer
+import mosestokenizer
+device = "cuda:0"
 
 # download model for English -> Spanish
-# tmp_lang_tokenizer, tmp_lang_model = download('Helsinki-NLP/opus-mt-en-es')
+#tmp_lang_tokenizer, tmp_lang_model = download('Helsinki-NLP/opus-mt-en-es')
 # download model for Spanish -> English
-# src_lang_tokenizer, src_lang_model = download('Helsinki-NLP/opus-mt-es-en')
+#src_lang_tokenizer, src_lang_model = download('Helsinki-NLP/opus-mt-es-en')
 
 
 def set_seed(seed):
@@ -32,7 +32,9 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-
+def chunks(lst, n):
+    return [lst[i:i + n] for i in range(0, len(lst), n)]
+    
 # taken from eda
 def get_synonyms(word):
     synonyms = set()
@@ -55,7 +57,7 @@ def synonym_replacement(sent):
         synonyms = get_synonyms(word)
         if len(synonyms) > 0:
             index = random.randint(0, len(synonyms) - 1)
-            new_sentence = [synonyms[index] if word_1 == word else word for word_1 in new_sentence]
+            new_sentence = [synonyms[index] if word_1 == word else word_1 for word_1 in new_sentence]
         random_syn = get_synonyms(str(random.sample(potential_words, 1)))
         if len(random_syn) > 0:
             new_sentence.insert(random.randint(0, len(new_sentence) - 1),
@@ -65,6 +67,7 @@ def synonym_replacement(sent):
 
 def random_swap(sent):
     chosen_index = []
+    sent = sent.split()
     sent_pos = [i for i in range(len(sent))]
     shuffle(sent_pos)
     for i in range(2):
@@ -83,7 +86,7 @@ def random_swap(sent):
 def data_augmentation(sentence, probability):
     sentence_alt = ''.join([i for i in sentence.lower() if i not in punctuation])
     sent = sentence_alt.split()
-    return sentence + " " + synonym_replacement(sent) + random_swap(sent)
+    return random_swap(synonym_replacement(sentence.split()))
 
 
 def sentenceCreator():
@@ -104,16 +107,36 @@ def createSequence(sentence, model, tokenizer):
 
 
 # Helper function to download data for a language
-def download(model_name):
-    tokenizer = MarianTokenizer.from_pretrained(model_name)
-    model = MarianMTModel.from_pretrained(model_name)
+def download(model_name, max_len):
+    tokenizer = MarianTokenizer.from_pretrained(model_name)#, batch_size=64, sequence_length=100)
+    model = MarianMTModel.from_pretrained(model_name).to('cuda').half()#batch_size=64, sequence_length=100)
+    model = model.to(device)
     return tokenizer, model
 
+# download model for English -> Spanish                                                               
+tmp_lang_tokenizer, tmp_lang_model = download(f'Helsinki-NLP/opus-mt-en-ROMANCE', max_len=100)                          
+# download model for Spanish -> English
+src_lang_tokenizer, src_lang_model = download(f'Helsinki-NLP/opus-mt-ROMANCE-en', max_len=100)   
 
 def translate(texts, model, tokenizer, language):
-    translated = model.generate(**tokenizer.prepare_seq2seq_batch(texts, return_tensors="pt"))
-    translated_texts = tokenizer.batch_decode(translated, skip_special_tokens=True)
-    return translated_texts
+    translations = []
+    my_text = []
+    chunks = texts.split()
+    per_line = 100
+    for i in range(0, len(chunks), per_line):
+        my_text.append(" ".join(chunks[i:i + per_line]))
+    #my_text.extend(texts)
+    #print(texts[1:4])
+    #for src_text_list in my_text:
+#        print(src_text_list)
+    batch = tokenizer.prepare_seq2seq_batch(my_text, return_tensors="pt")
+    batch = batch.to(device)
+    translated = model.generate(**batch)
+    #print(tokenizer.batch_decode(translated, skip_special_tokens=True))
+    french: List[str]  = tokenizer.batch_decode(translated, skip_special_tokens=True)
+    translations.extend(french)
+#        print(french)
+    return " ".join(translations)
 
 
 def back_translate(texts, language_src, language_dst):
@@ -121,6 +144,31 @@ def back_translate(texts, language_src, language_dst):
     back_translated = translate(translated, src_lang_model, src_lang_tokenizer, language_src)
     return back_translated
 
+def back_translator(context):
+    en2de = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.en-fr',
+                       tokenizer='moses', bpe='subword_nmt')
+    #en2de.eval()  # disable dropout
+
+    # The underlying model is available under the *models* attribute
+    #assert isinstance(en2de.models[0], fairseq.models.transformer.TransformerModel)
+
+    # Move model to GPU for faster translation
+    #en2de.cuda()
+
+    # Batched translation
+    translated = [en2de.translate(context[i:(i+1023)]) for i in range(0, len(context) , 1023)]
+
+    de2en = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.fr-en',
+                       tokenizer='moses', bpe='subword_nmt')
+    #de2en.eval()  # disable dropout                                                                   
+    # The underlying model is available under the *models* attribute                                  
+    #assert isinstance(de2en.models[0], fairseq.models.transformer.TransformerModel)
+
+    # Move model to GPU for faster translation                                                        
+    #de2en.cuda()
+    # ['Hallo Welt!', 'Die Katze saß auf der Matte.']
+
+    return [de2en.translate(translated[i:(i+1023)]) for i in range(0, len(translated) , 1023)]
 
 def load_pickle(path):
     with open(path, 'rb') as f:
@@ -306,23 +354,33 @@ def read_squad(path, split_name):
         squad_dict = json.load(f)
     data_dict = {'question': [], 'context': [], 'id': [], 'answer': []}
     augment = False
-    if split_name == 'train':
+    if split_name == 'trainoo':
         #    n = 2
         n = 1
         augment = True
     else:
         n = 1
-    tokenizer, model = sentenceCreator()
+   # tokenizer, model = sentenceCreator()
     for i in range(0, n):
-        look = random.sample(squad_dict['data'], len(squad_dict['data']))
+        #if split_name == 'train':
+#        look = sorted(squad_dict['data'],key=lambda x: len(x['paragraphs'][0]['context']))
+        #else:
+        look = squad_dict['data']
+        #look = random.sample(squad_dict['data'], len(squad_dict['data']))
+       # print(look)
         for group in look:
             for passage in group['paragraphs']:
+#                print(len(passage['context']))
                 context = passage['context']
                 if augment:
-                    augmented = data_augmentation(context, .1)
+     #               print(context)
+                    augmented = back_translate(context, "en", "fr")
+               #     augmented = data_augmentation(context, .1)
                     context = augmented
-                # if i == 1:
-                #    back_translate(context)
+      #              print(context)
+                   # print(context)
+               #  if i == 1:
+               #     context = back_translate(context)
                 # if len(context) < 150:
                 #    context = createSequence(context, model, tokenizer)
                 for qa in passage['qas']:

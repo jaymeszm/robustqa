@@ -363,7 +363,7 @@ def main():
     util.set_seed(args.seed)
     if args.model_type == "qa":
         model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
-    else if args.model_type == "mlm_qa":
+    elif args.model_type == "mlm_qa":
         model = DistilBertForMLMQA.from_pretrained("distilbert-base-uncased")
     else: #args.model_type == "mlm_qa_alt"
         model = DistilBertForMLMQA.from_pretrained("distilbert-base-uncased")
@@ -380,7 +380,8 @@ def main():
         trainer = Trainer(args, log)
         train_dataset, _ = get_dataset(args, args.train_datasets, args.train_dir, tokenizer, 'train')
         if args.model_type == "mlm_qa_alt":
-            masked_train_dataset, _ = get_masked_dataset(args, args.train_datasets, args.train_dir, tokenizer, 'train')
+            masked_train_dataset = get_masked_dataset(args, args.train_datasets, args.train_dir, tokenizer)
+
             train_masked_loader = DataLoader(train_dataset,
                                     batch_size=args.batch_size,
                                     sampler=RandomSampler(train_dataset))

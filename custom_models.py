@@ -60,7 +60,6 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
         attention_mask=None, 
         head_mask=None, 
         inputs_embeds=None,
-        apply_input_mask=False, # decide on this
         start_positions=None,
         end_positions=None,
         output_attentions=None,
@@ -128,7 +127,7 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
 
         if mlm_loss is not None and qa_loss is not None:
             total_loss = mlm_loss + qa_loss
-        else if mlm_loss is not None:
+        elif mlm_loss is not None:
             total_loss = qa_loss
         else:
             total_loss = mlm_loss

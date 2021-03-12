@@ -294,6 +294,8 @@ class MaskedLMTrainer():
         self.visualize_predictions = args.visualize_predictions
         if not os.path.exists(self.path):
             os.makedirs(self.path)
+        # adding optional gradient accumulation
+        self.accumulation_steps = args.gradient_accumulation_steps
 
     def save(self, model):
         model.save_pretrained(self.path)
@@ -324,7 +326,6 @@ class MaskedLMTrainer():
         global_idx = 0
         best_loss = 100.0
         tbx = SummaryWriter(self.save_dir)
-        accumulation_steps = 4
 
         for epoch_num in range(self.num_epochs):
             self.log.info(f'Epoch: {epoch_num}')
@@ -337,9 +338,9 @@ class MaskedLMTrainer():
                     labels = batch['labels'].to(device)
                     outputs = model(input_ids, attention_mask=attention_mask,
                                     labels=labels)
-                    loss = outputs[0] / accumulation_steps
+                    loss = outputs[0] / self.accumulation_steps
                     loss.backward()
-                    if (global_idx+1) % accumulation_steps == 0:
+                    if (global_idx+1) % self.accumulation_steps == 0:
                         optim.step()
                         optim.zero_grad()
                         progress_bar.update(len(input_ids) * accumulation_steps)

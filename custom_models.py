@@ -60,7 +60,7 @@ class DistilBertForMLMQA(DistilBertPreTrainedModel):
         attention_mask=None, 
         head_mask=None, 
         inputs_embeds=None,
-        apply_input_mask=True, # decide on this
+        apply_input_mask=False, # decide on this
         start_positions=None,
         end_positions=None,
         output_attentions=None,

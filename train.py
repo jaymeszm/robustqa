@@ -193,7 +193,7 @@ class Trainer():
             return preds, results
         return results
 
-    def train(self, model, train_dataloader, eval_dataloader, val_dict):
+    def train(self, model, train_dataloader, eval_dataloader, val_dict, mlmqa=False):
         device = self.device
         model.to(device)
         optim = AdamW(model.parameters(), lr=self.lr)
@@ -211,7 +211,7 @@ class Trainer():
                     attention_mask = batch['attention_mask'].to(device)
                     start_positions = batch['start_positions'].to(device)
                     end_positions = batch['end_positions'].to(device)
-                    if args.model_type == "mlmqa":
+                    if mlmqa:
                         outputs = model(input_ids, attention_mask=attention_mask,
                                         start_positions=start_positions,
                                         end_positions=end_positions, apply_input_mask=True)
@@ -286,7 +286,7 @@ def main():
         val_loader = DataLoader(val_dataset,
                                 batch_size=args.batch_size,
                                 sampler=SequentialSampler(val_dataset))
-        best_scores = trainer.train(model, train_loader, val_loader, val_dict)
+        best_scores = trainer.train(model, train_loader, val_loader, val_dict, mlmqa= (args.model_type != "qa"))
     if args.do_eval:
         args.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         split_name = 'test' if 'test' in args.eval_dir else 'validation'
@@ -304,7 +304,7 @@ def main():
                                                    split=split_name)
         results_str = ', '.join(f'{k}: {v:05.2f}' for k, v in eval_scores.items())
         log.info(f'Eval {results_str}')
-        # Write submission file
+        # Write submission filee
         sub_path = os.path.join(args.save_dir, split_name + '_' + args.sub_file)
         log.info(f'Writing submission file to {sub_path}...')
         with open(sub_path, 'w', newline='', encoding='utf-8') as csv_fh:

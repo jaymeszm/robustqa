@@ -17,7 +17,7 @@ from args import get_train_test_args
 
 from tqdm import tqdm
 from transformers import DistilBertForMaskedLM
-# from transformers import DistilBertModel, DistilBertConfig
+from transformers import DistilBertModel, DistilBertConfig
 import random
 import pprint
 
@@ -324,7 +324,7 @@ class MaskedLMTrainer():
         model.to(device)
         optim = AdamW(model.parameters(), lr=self.lr)
         global_idx = 0
-        best_loss = 100.0
+        best_loss = 10.0
         tbx = SummaryWriter(self.save_dir)
 
         for epoch_num in range(self.num_epochs):
@@ -340,18 +340,18 @@ class MaskedLMTrainer():
                                     labels=labels)
                     loss = outputs[0] / self.accumulation_steps
                     loss.backward()
-                    if (global_idx+1) % self.accumulation_steps == 0:
+                    if global_idx % self.accumulation_steps == 0:
                         optim.step()
                         optim.zero_grad()
                         progress_bar.update(len(input_ids) * self.accumulation_steps)
                         progress_bar.set_postfix(epoch=epoch_num, NLL=loss.item())
                         tbx.add_scalar('train/NLL', loss.item(), global_idx)
-                        if (global_idx+1) % self.eval_every == 0:
+                        if global_idx % self.eval_every == 0:
                             self.log.info(f'Evaluating at step {global_idx}...')
                             curr_loss = self.evaluate(model, eval_dataloader)
                             self.log.info('Visualizing in TensorBoard...')
-                            tbx.add_scalar('dev/NLL', loss.item(), global_idx)
-                            self.log.info(f'Masked LM dev loss {curr_loss}')
+                            tbx.add_scalar('dev/NLL', curr_loss.item(), global_idx)
+                            self.log.info(f'Masked LM val loss {curr_loss}')
                             if curr_loss <= best_loss:
                                 best_loss = curr_loss
                                 self.save(model)

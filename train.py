@@ -7,6 +7,7 @@ import csv
 import util
 from transformers import DistilBertTokenizerFast
 from transformers import DistilBertForQuestionAnswering
+from transformers import DistilBertForMaskedLM
 from transformers import AdamW
 from tensorboardX import SummaryWriter
 
@@ -117,7 +118,6 @@ def prepare_train_data(dataset_dict, tokenizer):
     return tokenized_examples
 
 
-
 def read_and_process(args, tokenizer, dataset_dict, dir_name, dataset_name, split):
     #TODO: cache this if possible
     cache_path = f'{dir_name}/{dataset_name}_encodings.pt'
@@ -131,9 +131,6 @@ def read_and_process(args, tokenizer, dataset_dict, dir_name, dataset_name, spli
         util.save_pickle(tokenized_examples, cache_path)
     return tokenized_examples
 
-
-
-#TODO: use a logger, use tensorboard
 class Trainer():
     def __init__(self, args, log):
         self.lr = args.lr
@@ -240,6 +237,36 @@ class Trainer():
                     global_idx += 1
         return best_scores
 
+    """ Simple MLM training without evaluation on val set
+        Save model every args.eval_every steps """
+    def train_mlm(self, model, train_dataloader):
+        device = self.device
+        model.to(device)
+        optim = AdamW(model.parameters(), lr=self.lr)
+        global_idx = 0
+        tbx = SummaryWriter(self.save_dir)
+
+        for epoch_num in range(self.num_epochs):
+            self.log.info(f'Epoch: {epoch_num}')
+            with torch.enable_grad(), tqdm(total=len(train_dataloader.dataset)) as progress_bar:
+                for batch in train_dataloader:
+                    optim.zero_grad()
+                    model.train()
+                    input_ids = batch['input_ids'].to(device)
+                    attention_mask = batch['attention_mask'].to(device)
+                    labels = batch['labels'].to(device)
+                    outputs = model(input_ids, attention_mask=attention_mask,
+                                    labels=labels)
+                    loss = outputs[0]
+                    loss.backward()
+                    optim.step()
+                    progress_bar.update(len(input_ids))
+                    progress_bar.set_postfix(epoch=epoch_num, NLL=loss.item())
+                    tbx.add_scalar('train/NLL', loss.item(), global_idx)
+                    if global_idx % self.eval_every == 0:
+                        self.save(model)
+                    global_idx += 1
+
 def get_dataset(args, datasets, data_dir, tokenizer, split_name):
     datasets = datasets.split(',')
     dataset_dict = None
@@ -251,13 +278,51 @@ def get_dataset(args, datasets, data_dir, tokenizer, split_name):
     data_encodings = read_and_process(args, tokenizer, dataset_dict, data_dir, dataset_name, split_name)
     return util.QADataset(data_encodings, train=(split_name=='train')), dataset_dict
 
+def get_masked_dataset(args, tokenizer, dir_name, datasets):
+    datasets = datasets.split(',')
+    dataset_name=''
+    for dataset in datasets:
+        dataset_name += f'_{dataset}'
+    text_path = f'{dir_name}/{dataset_name}_context.txt'
+    context_cache_path = f'{dir_name}/{dataset_name}_context_encodings.pt'
+    mask_cache_path = f'{dir_name}/{dataset_name}_masked_encodings.pt'
+
+    if os.path.exists(mask_cache_path) and not args.recompute_mlm_features:
+        masked_examples = util.load_pickle(mask_cache_path)
+    else:
+        if os.path.exists(context_cache_path):
+            encodings = util.load_pickle(context_cache_path)
+        else:
+            if os.path.exists(text_path):
+                encodings = util.encode_context_data(tokenizer, dir_name, dataset_name)
+            else:
+                util.save_context(dir_name, datasets, dataset_name)
+                encodings = util.encode_context_data(tokenizer, dir_name, dataset_name, max_len=args.max_seq_length)
+        masked_examples = util.mask_train_data(encodings, tokenizer)
+        util.save_pickle(masked_examples, mask_cache_path)
+    return util.MLMDataset(masked_examples)
+
 def main():
     # define parser and arguments
     args = get_train_test_args()
 
     util.set_seed(args.seed)
-    model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
+    # model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
     tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
+
+    if args.do_train_mlm:
+        if not os.path.exists(args.save_dir):
+            os.makedirs(args.save_dir)
+        args.save_dir = util.get_save_dir(args.save_dir, args.run_name)
+        model = DistilBertForMaskedLM.from_pretrained('distilbert-base-uncased')
+        log = util.get_logger(args.save_dir, 'log_train')
+        log.info(f'Args: {json.dumps(vars(args), indent=4, sort_keys=True)}')
+        log.info("Preparing Masked Training Data...")
+        args.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        train_dataset = get_masked_dataset(args, tokenizer, args.train_dir, args.train_datasets)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=RandomSampler(train_dataset))
+        trainer = Trainer(args, log)
+        trainer.train_mlm(model, train_loader)
 
     if args.do_train:
         if not os.path.exists(args.save_dir):
@@ -278,6 +343,7 @@ def main():
                                 batch_size=args.batch_size,
                                 sampler=SequentialSampler(val_dataset))
         best_scores = trainer.train(model, train_loader, val_loader, val_dict)
+
     if args.do_eval:
         args.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         split_name = 'test' if 'test' in args.eval_dir else 'validation'

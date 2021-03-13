@@ -198,7 +198,7 @@ class MLMDataset(Dataset):
     def __len__(self):
         return len(self.encodings['input_ids'])
 
-def encode_context_data(tokenizer, dir_name, dataset_name):
+def encode_context_data(tokenizer, dir_name, dataset_name, max_len):
     """tokenize and save encodings for masked language modeling training"""
     path = f'{dir_name}/{dataset_name}_context.txt'
     with open(path) as f:
@@ -206,15 +206,13 @@ def encode_context_data(tokenizer, dir_name, dataset_name):
     corpus = [s.strip() for s in sentences]
     encodings = tokenizer(corpus,
                           truncation=True,
-                          max_length=512,
+                          max_length=max_len,
                           padding='max_length',
                           return_special_tokens_mask=True,
                           return_tensors="pt")
     cache_path = f'{dir_name}/{dataset_name}_context_encodings.pt'
     save_pickle(encodings, cache_path)
     return encodings
-    # for ids in encodings["input_ids"]:
-    #     print(tokenizer.decode(ids))
 
 def mask_train_data(encodings, tokenizer, mask_prob=0.15):
     """ Take batch encodings and mask out tokens given by mlm probability """

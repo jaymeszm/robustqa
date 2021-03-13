@@ -352,7 +352,7 @@ class Trainer():
                     global_idx += 1
         return best_scores
 
-    def train_mlm_qa_alt(self, model, train_dataloader, eval_dataloader, val_dict, masked_train_dl):
+    def train_mlm_qa_alt_2(self, model, train_dataloader, eval_dataloader, val_dict):
         device = self.device
         model.to(device)
         optim = AdamW(model.parameters(), lr=self.lr)
@@ -363,28 +363,30 @@ class Trainer():
         for epoch_num in range(self.num_epochs):
             self.log.info(f'Epoch: {epoch_num}')
             with torch.enable_grad(), tqdm(total=len(train_dataloader.dataset)) as progress_bar:
-                for idx_batch, batch in enumerate(train_dataloader):
+                for idx, batch in enumerate(train_dataloader):
                     optim.zero_grad()
                     model.train()
-                    if (idx_batch % 2 ) != 0:
-                        input_ids = batch['input_ids'].to(device)
-                        attention_mask = batch['attention_mask'].to(device)
-                        start_positions = batch['start_positions'].to(device)
-                        end_positions = batch['end_positions'].to(device)
+                    # masked/MLM layer
+                    input_ids = batch['input_ids'].to(device)
+                    attention_mask = batch['attention_mask'].to(device)
+                    start_positions = batch['start_positions'].to(device)
+                    end_positions = batch['end_positions'].to(device)
+                    
+                    if (idx % 2 == 1):
                         outputs = model(input_ids, attention_mask=attention_mask,
                                         start_positions=start_positions,
-                                        end_positions=end_positions, qa=True)
+                                        end_positions=end_positions, qa=False, apply_input_mask=True)
                     else:
-                        batch = masked_train_dl[idx_batch]
-                        input_ids = batch['input_ids'].to(device)
-                        attention_mask = batch['attention_mask'].to(device)
-                        labels = batch['labels'].to(device)
                         outputs = model(input_ids, attention_mask=attention_mask,
-                                        labels=labels, qa=False)
-                                   
+                                        start_positions=start_positions,
+                                        end_positions=end_positions, qa=True, apply_input_mask=False)
+
+                    # backward
                     loss = outputs[0]
+                    print(loss)
                     loss.backward()
                     optim.step()
+
                     progress_bar.update(len(input_ids))
                     progress_bar.set_postfix(epoch=epoch_num, NLL=loss.item())
                     tbx.add_scalar('train/NLL', loss.item(), global_idx)
@@ -443,6 +445,7 @@ def main():
         args.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         trainer = Trainer(args, log)
         train_dataset, _ = get_dataset(args, args.train_datasets, args.train_dir, tokenizer, 'train')
+        """
         if args.model_type == "mlm_qa_alt":
             masked_train_dataset = get_masked_dataset(args, args.train_datasets, args.train_dir, tokenizer)
 
@@ -450,6 +453,7 @@ def main():
             train_masked_loader = DataLoader(train_dataset,
                                     batch_size=args.batch_size,
                                     sampler=RandomSampler(train_dataset))
+                                    """
         log.info("Preparing Validation Data...")
         val_dataset, val_dict = get_dataset(args, args.train_datasets, args.val_dir, tokenizer, 'val')
         train_loader = DataLoader(train_dataset,
@@ -459,7 +463,7 @@ def main():
                                 batch_size=args.batch_size,
                                 sampler=SequentialSampler(val_dataset))
         if args.model_type == "mlm_qa_alt":
-            best_scores = trainer.train_mlm_qa_alt(model, train_loader, val_loader, val_dict, train_masked_loader)
+            best_scores = trainer.train_mlm_qa_alt_2(model, train_loader, val_loader, val_dict)
         else:
             best_scores = trainer.train(model, train_loader, val_loader, val_dict, mlmqa= (args.model_type != "qa"))
 

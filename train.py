@@ -117,7 +117,6 @@ def prepare_train_data(dataset_dict, tokenizer):
     print(f"Preprocessing not completely accurate for {inaccurate}/{total} instances")
     return tokenized_examples
 
-
 def read_and_process(args, tokenizer, dataset_dict, dir_name, dataset_name, split):
     #TODO: cache this if possible
     cache_path = f'{dir_name}/{dataset_name}_encodings.pt'
@@ -291,8 +290,8 @@ class Trainer():
                         if curr_loss <= best_eval_loss:
                             best_eval_loss = curr_loss
                             self.save(model)
-            return best_eval_loss
-
+                    global_idx += 1
+        return best_eval_loss
 
 def get_dataset(args, datasets, data_dir, tokenizer, split_name):
     datasets = datasets.split(',')

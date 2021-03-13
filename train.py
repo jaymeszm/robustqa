@@ -144,6 +144,7 @@ class Trainer():
         self.visualize_predictions = args.visualize_predictions
         if not os.path.exists(self.path):
             os.makedirs(self.path)
+        # self.accumulation_steps = args.gradient_accumulation_steps
 
     def save(self, model):
         model.save_pretrained(self.path)
@@ -237,14 +238,32 @@ class Trainer():
                     global_idx += 1
         return best_scores
 
-    """ Simple MLM training without evaluation on val set
-        Save model every args.eval_every steps """
-    def train_mlm(self, model, train_dataloader):
+    def evaluate_mlm(self, model, data_loader, return_preds=False):
+        device = self.device
+        model.eval()
+        eval_loss = 0.0
+        eval_steps = 0
+
+        with torch.no_grad(), tqdm(total=len(data_loader.dataset)) as progress_bar:
+            for batch in data_loader:
+                input_ids = batch['input_ids'].to(device)
+                attention_mask = batch['attention_mask'].to(device)
+                labels = batch['labels'].to(device)
+                outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+                # Compute loss
+                loss = outputs[0].item()
+                eval_loss += loss
+                eval_steps += 1
+                progress_bar.update(len(input_ids))
+        return eval_loss / eval_steps
+
+    def train_mlm(self, model, train_dataloader, eval_dataloader):
         device = self.device
         model.to(device)
         optim = AdamW(model.parameters(), lr=self.lr)
         global_idx = 0
         tbx = SummaryWriter(self.save_dir)
+        best_eval_loss = 10.0
 
         for epoch_num in range(self.num_epochs):
             self.log.info(f'Epoch: {epoch_num}')
@@ -264,8 +283,16 @@ class Trainer():
                     progress_bar.set_postfix(epoch=epoch_num, NLL=loss.item())
                     tbx.add_scalar('train/NLL', loss.item(), global_idx)
                     if global_idx % self.eval_every == 0:
-                        self.save(model)
-                    global_idx += 1
+                        self.log.info(f'Evaluating at step {global_idx}...')
+                        curr_loss = self.evaluate_mlm(model, eval_dataloader)
+                        self.log.info('Visualizing in TensorBoard...')
+                        tbx.add_scalar('dev/NLL', curr_loss, global_idx)
+                        self.log.info(f'Masked LM val loss {curr_loss}')
+                        if curr_loss <= best_eval_loss:
+                            best_eval_loss = curr_loss
+                            self.save(model)
+            return best_eval_loss
+
 
 def get_dataset(args, datasets, data_dir, tokenizer, split_name):
     datasets = datasets.split(',')
@@ -278,27 +305,28 @@ def get_dataset(args, datasets, data_dir, tokenizer, split_name):
     data_encodings = read_and_process(args, tokenizer, dataset_dict, data_dir, dataset_name, split_name)
     return util.QADataset(data_encodings, train=(split_name=='train')), dataset_dict
 
-def get_masked_dataset(args, tokenizer, dir_name, datasets):
+def get_masked_dataset(args, tokenizer, dir_name, datasets, max_seq_length):
     datasets = datasets.split(',')
     dataset_name=''
     for dataset in datasets:
         dataset_name += f'_{dataset}'
     text_path = f'{dir_name}/{dataset_name}_context.txt'
-    context_cache_path = f'{dir_name}/{dataset_name}_context_encodings.pt'
-    mask_cache_path = f'{dir_name}/{dataset_name}_masked_encodings.pt'
+    context_cache_path = f'{dir_name}/{dataset_name}_context_encodings_{max_seq_length}.pt'
+    mask_cache_path = f'{dir_name}/{dataset_name}_masked_encodings_{max_seq_length}.pt'
 
     if os.path.exists(mask_cache_path) and not args.recompute_mlm_features:
+        print('Masked encodings already created!')
         masked_examples = util.load_pickle(mask_cache_path)
     else:
         if os.path.exists(context_cache_path):
             encodings = util.load_pickle(context_cache_path)
         else:
             if os.path.exists(text_path):
-                encodings = util.encode_context_data(tokenizer, dir_name, dataset_name)
+                encodings = util.encode_context_data(tokenizer, dir_name, dataset_name, args.max_seq_length)
             else:
                 util.save_context(dir_name, datasets, dataset_name)
                 encodings = util.encode_context_data(tokenizer, dir_name, dataset_name, max_len=args.max_seq_length)
-        masked_examples = util.mask_train_data(encodings, tokenizer)
+        masked_examples = util.mask_train_data(encodings, tokenizer, args.mask_prob, args.mask_type)
         util.save_pickle(masked_examples, mask_cache_path)
     return util.MLMDataset(masked_examples)
 
@@ -319,10 +347,17 @@ def main():
         log.info(f'Args: {json.dumps(vars(args), indent=4, sort_keys=True)}')
         log.info("Preparing Masked Training Data...")
         args.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-        train_dataset = get_masked_dataset(args, tokenizer, args.train_dir, args.train_datasets)
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=RandomSampler(train_dataset))
+        train_dataset = get_masked_dataset(args, tokenizer, args.train_dir, args.train_datasets, args.max_seq_length)
+        log.info("Preparing Masked Validation Data...")
+        val_dataset = get_masked_dataset(args, tokenizer, args.val_dir, args.train_datasets, args.max_seq_length)
+        train_loader = DataLoader(train_dataset,
+                                  batch_size=args.batch_size,
+                                  sampler=RandomSampler(train_dataset))
+        val_loader = DataLoader(val_dataset,
+                                batch_size=args.batch_size,
+                                sampler=SequentialSampler(val_dataset))
         trainer = Trainer(args, log)
-        trainer.train_mlm(model, train_loader)
+        best_loss = trainer.train_mlm(model, train_loader, val_loader)
 
     if args.do_train:
         if not os.path.exists(args.save_dir):

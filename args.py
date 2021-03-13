@@ -27,5 +27,7 @@ def get_train_test_args():
     parser.add_argument('--eval-every', type=int, default=5000)
     parser.add_argument('--gradient-accumulation-steps', type=int, default=1)
     parser.add_argument('--max-seq-length', type=int, default=512)
+    parser.add_argument('--mask-prob', type=float, default=0.15)
+    parser.add_argument('--mask-type', type=str, default='basic')
     args = parser.parse_args()
     return args

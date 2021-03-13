@@ -210,11 +210,11 @@ def encode_context_data(tokenizer, dir_name, dataset_name, max_len):
                           padding='max_length',
                           return_special_tokens_mask=True,
                           return_tensors="pt")
-    cache_path = f'{dir_name}/{dataset_name}_context_encodings.pt'
-    save_pickle(encodings, cache_path)
+    # cache_path = f'{dir_name}/{dataset_name}_context_encodings.pt'
+    # save_pickle(encodings, cache_path)
     return encodings
 
-def mask_train_data(encodings, tokenizer, mask_prob=0.15):
+def mask_train_data(encodings, tokenizer, mask_prob, mask_type):
     """ Take batch encodings and mask out tokens given by mlm probability """
     labels = encodings['input_ids'].detach().clone() #a tensor of shape b x seq_length
     prob_matrix = torch.full_like(labels, mask_prob, dtype=torch.float)
@@ -222,8 +222,11 @@ def mask_train_data(encodings, tokenizer, mask_prob=0.15):
     prob_matrix.masked_fill_(encodings['special_tokens_mask'] > 0, 0.0)
     mask_matrix = torch.bernoulli(prob_matrix).bool() # returns boolean matrix of 0 (no mask) and 1 (mask)
 
-    # set all masked tokens to [MASK]
-    encodings['input_ids'][mask_matrix] = tokenizer.mask_token_id
+    if mask_type == 'basic':
+        # set all masked tokens to [MASK]
+        encodings['input_ids'][mask_matrix] = tokenizer.mask_token_id
+    # elif mode == 'bert':
+        #TODO: 80% replace with MASK, 10% random words, 10% original
 
     # set labels for non-masked tokens to -100
     labels[~mask_matrix] = -100

@@ -345,7 +345,10 @@ def main():
         log.info(f'Args: {json.dumps(vars(args), indent=4, sort_keys=True)}')
         log.info("Preparing Masked Training Data...")
         args.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-        model = DistilBertForMaskedLM.from_pretrained('distilbert-base-uncased')
+        if args.pretrain_dir is not None:
+            checkpoint_path = os.path.join(args.pretrain_dir, 'checkpoint')
+            model = DistilBertForMaskedLM.from_pretrained(checkpoint_path)
+        else: model = DistilBertForMaskedLM.from_pretrained('distilbert-base-uncased')
         model.to(args.device)
         train_dataset = get_masked_dataset(args, tokenizer, args.train_dir, args.train_datasets, args.max_seq_length)
         log.info("Preparing Masked Validation Data...")

@@ -311,7 +311,7 @@ def get_masked_dataset(args, tokenizer, dir_name, datasets, max_seq_length):
         dataset_name += f'_{dataset}'
     text_path = f'{dir_name}/{dataset_name}_context.txt'
     context_cache_path = f'{dir_name}/{dataset_name}_context_encodings_{max_seq_length}.pt'
-    mask_cache_path = f'{dir_name}/{dataset_name}_masked_encodings_{max_seq_length}.pt'
+    mask_cache_path = f'{dir_name}/{dataset_name}_masked_encodings_{max_seq_length}_{args.mask_type}.pt'
 
     if os.path.exists(mask_cache_path) and not args.recompute_mlm_features:
         print('Masked encodings already created!')
@@ -348,7 +348,8 @@ def main():
         if args.pretrain_dir is not None:
             checkpoint_path = os.path.join(args.pretrain_dir, 'checkpoint')
             model = DistilBertForMaskedLM.from_pretrained(checkpoint_path)
-        else: model = DistilBertForMaskedLM.from_pretrained('distilbert-base-uncased')
+        else:
+            model = DistilBertForMaskedLM.from_pretrained('distilbert-base-uncased')
         model.to(args.device)
         train_dataset = get_masked_dataset(args, tokenizer, args.train_dir, args.train_datasets, args.max_seq_length)
         log.info("Preparing Masked Validation Data...")
@@ -373,7 +374,8 @@ def main():
         if args.pretrain_dir is not None:
             checkpoint_path = os.path.join(args.pretrain_dir, 'checkpoint')
             model = DistilBertForQuestionAnswering.from_pretrained(checkpoint_path)
-        else: model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
+        else:
+            model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
         model.to(args.device)
         trainer = Trainer(args, log)
         train_dataset, _ = get_dataset(args, args.train_datasets, args.train_dir, tokenizer, 'train')

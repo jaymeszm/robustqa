@@ -217,16 +217,39 @@ def encode_context_data(tokenizer, dir_name, dataset_name, max_len):
 def mask_train_data(encodings, tokenizer, mask_prob, mask_type):
     """ Take batch encodings and mask out tokens given by mlm probability """
     labels = encodings['input_ids'].detach().clone() #a tensor of shape b x seq_length
-    prob_matrix = torch.full_like(labels, mask_prob, dtype=torch.float)
-    # set prob for special tokens to 0
-    prob_matrix.masked_fill_(encodings['special_tokens_mask'] > 0, 0.0)
-    mask_matrix = torch.bernoulli(prob_matrix).bool() # returns boolean matrix of 0 (no mask) and 1 (mask)
 
     if mask_type == 'basic':
+        # each token has mask_prob of being masked
+        prob_matrix = torch.full_like(labels, mask_prob, dtype=torch.float)
+        # set prob for special tokens to 0
+        prob_matrix.masked_fill_(encodings['special_tokens_mask'] > 0, 0.0)
+        # make boolean matrix of 0 (no mask) and 1 (mask)
+        mask_matrix = torch.bernoulli(prob_matrix).bool()
         # set all masked tokens to [MASK]
         encodings['input_ids'][mask_matrix] = tokenizer.mask_token_id
-    # elif mode == 'bert':
-        #TODO: 80% replace with MASK, 10% random words, 10% original
+    elif mask_type == 'bert':
+        # 80% of the time replace with MASK, 10% random words, 10% original
+        prob_matrix = torch.full_like(labels, mask_prob, dtype=torch.float)
+        prob_matrix.masked_fill_(encodings['special_tokens_mask'] > 0, 0.0)
+        mask_matrix = torch.bernoulli(prob_matrix).bool()
+        mask_replace = mask_matrix & torch.bernoulli(torch.full_like(labels, 0.8, dtype=torch.float)).bool()
+        encodings['input_ids'][mask_replace] = tokenizer.mask_token_id
+
+        random_replace = mask_matrix & (~mask_replace) & torch.bernoulli(torch.full_like(labels, 0.5, dtype=torch.float)).bool()
+        random_tokens = torch.randint_like(labels, len(tokenizer), dtype=torch.long)
+        encodings['input_ids'][random_replace] = random_tokens[random_replace]
+
+    # elif mask_type == 'span':
+    #     m = Geometric(torch.tensor([0.2])) # initiate geometric distribution with p=0.2
+    #     for input_ids in encodings['input_ids']:
+    #         sep_idx = input_ids.index(tokenizer.sep_token_id)
+    #         mask_len = int(mask_prob * (sep_idx-1)) # target number of masked tokens
+    #         total_span_len = 0
+    #         while total_span_len < mask_len:
+    #             span_len = min(np.random.geometric(p=0.2), 10) #cap max span length to 10
+    #             span_start_idx = random.randint(1, sep_idx-1)
+    #             input_ids[span_start_idx:min(span_start_idx+span_len, sep_idx)] = tokenizer.mask_token_id
+    #             total_span_len += span_len
 
     # set labels for non-masked tokens to -100
     labels[~mask_matrix] = -100

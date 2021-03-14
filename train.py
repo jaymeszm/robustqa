@@ -253,7 +253,7 @@ def get_dataset(args, datasets, data_dir, tokenizer, split_name):
             name = split_name
         dataset_dict_curr = util.read_squad(f'{data_dir}/{dataset}', name)
         dataset_dict = util.merge(dataset_dict, dataset_dict_curr)
-    if split_name == 'traindd':
+    if split_name == 'train':
         #back_translation_aug = naw.BackTranslationAug(from_model_name='transformer.wmt19.en-de', to_model_name='transformer.wmt19.de-en')
         #print(dataset_dict['context'])
         #look = sorted(dataset_dict,key=lambda x: len(x['context']))

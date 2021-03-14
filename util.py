@@ -27,15 +27,23 @@ def set_seed(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    
+
 # taken from eda
 def get_synonyms(word):
-    synonyms = []
+    #synonyms = []
+    synonyms = set()
     for syn in wordnet.synsets(word):
-        for pot in syn.lemmas():
-            synonyms.append("".join([char for char in pot.name().replace("_", " ") \
-                                     if char in qwerty]))
-    return synonyms
+        #for pot in syn.lemmas():
+        #    synonyms.append("".join([char for char in pot.name().replace("_", " ") \
+         #                            if char in qwerty]))
+    #return synonyms
+        for l in syn.lemmas():
+            synonym = l.name().replace("_", " ").replace("-", " ").lower()
+            synonym = "".join([char for char in synonym if char in ' qwertyuiopasdfghjklzxcvbnm'])
+            synonyms.add(synonym)
+    if word in synonyms:
+        synonyms.remove(word)
+    return list(synonyms)
 
 
 def synonym_replacement(sent):
@@ -52,19 +60,32 @@ def synonym_replacement(sent):
         if len(random_syn) > 0:
             new_sentence.insert(random.randint(0, len(new_sentence) - 1),
                                 random_syn[0])
-    return ' '.join(new_sentence) + " "
+    return new_sentence
 
 
 def random_swap(sent):
-    first_index = rand.int(0, len(sent))
-    second_index = rand.int(0, len(sent))
-    if first_index == second_index:
-        second_index = rand.int(0, len(sent))
-    temp = sent[first_index]
-    temp1 = sent[second_index]
-    sent[first_index] = temp1
-    sent[second_index] = temp
-    return ' '.join(sent) + " "
+    #first_index = rand.int(0, len(sent))
+    #second_index = rand.int(0, len(sent))
+    #if first_index == second_index:
+    #    second_index = rand.int(0, len(sent))
+    #temp = sent[first_index]
+    #temp1 = sent[second_index]
+    #sent[first_index] = temp1
+    #sent[second_index] = temp
+    #return ' '.join(sent) + " "
+    n = int(len(sent) * .03)
+    new_words = sent.copy()
+    for _ in range(n):
+        random_idx_1 = random.randint(0, len(new_words)-1)
+        random_idx_2 = random_idx_1
+        counter = 0
+        while random_idx_2 == random_idx_1:
+            random_idx_2 = random.randint(0, len(new_words)-1)
+            counter += 1
+            if counter > 3:
+                break
+        new_words[random_idx_1], new_words[random_idx_2] = new_words[random_idx_2], new_words[random_idx_1] 
+    return ' '.join(new_words) + " "
 
 
 def data_augmentation(sentence, probability):
@@ -90,17 +111,19 @@ def createSequence(sentence, model, tokenizer):
     return str(text)
 
 
-# Helper function to download data for a language
+ # Helper function to download data for a language
 def download(model_name):
     tokenizer = MarianTokenizer.from_pretrained(model_name)
     model = MarianMTModel.from_pretrained(model_name).to('cuda').half()
     model = model.to(device)
     return tokenizer, model
 
-tmp_lang_tokenizer, tmp_lang_model = download(f'Helsinki-NLP/opus-mt-en-ROMANCE')
-src_lang_tokenizer, src_lang_model = download(f'Helsinki-NLP/opus-mt-ROMANCE-en')
+# download model for English -> Spanish                                                               
+tmp_lang_tokenizer, tmp_lang_model = download(f'Helsinki-NLP/opus-mt-en-ROMANCE'                          
+# download model for Spanish -> English
+src_lang_tokenizer, src_lang_model = download(f'Helsinki-NLP/opus-mt-ROMANCE-en')   
 
-def translate(texts, model, tokenizer):
+def translate(texts, model, tokenizer, language):
     translations = []
     my_text = []
     chunks = texts.split()
@@ -317,31 +340,27 @@ def read_squad(path, split_name):
     data_dict = {'question': [], 'context': [], 'id': [], 'answer': []}
     augment = False
     if split_name == 'trainoo':
-        #    n = 2
-        n = 1
+        n = 3
         augment = True
     else:
         n = 1
     for i in range(0, n):
-        #if split_name == 'train':
-#        look = sorted(squad_dict['data'],key=lambda x: len(x['paragraphs'][0]['context']))
-        #else:
-        look = squad_dict['data']
-        #look = random.sample(squad_dict['data'], len(squad_dict['data']))
-       # print(look)
-        for group in look:
+        for group in squad_dict['data']:
             for passage in group['paragraphs']:
                 context = passage['context']
-                if augment:
-                    augmented = back_translate(context, "en", "fr")
-               #     augmented = data_augmentation(context, .1)
-                    context = augmented
-               #  if i == 1:
-               #     context = back_translate(context)
-                # if len(context) < 150:
-                #    context = createSequence(context, model, tokenizer)
+                #print(context)
+                if augment and i == 1:
+                    context = back_translate(context, "en", "fr")
+#                    print(context)
+                num = random.randint(0,4)
+#                print(num) 
+                if (augment and i == 2) or (split_name == 'train' and num == 2):     
+                    context = data_augmentation(context, .1)
+                 #   print(context)
                 for qa in passage['qas']:
                     question = qa['question']
+                    if augment and i == 1:
+                        question = back_translate(question, "en", "fr")
                     if len(qa['answers']) == 0:
                         data_dict['question'].append(question)
                         data_dict['context'].append(context)

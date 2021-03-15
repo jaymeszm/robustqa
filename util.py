@@ -351,6 +351,7 @@ def read_squad(path, split_name, augmentation):
     augment = False
     if augmentation:
         augment = True
+        n = 1
         if split_name == 'trainoo':
             n = 3
     else:

@@ -445,15 +445,6 @@ def main():
         args.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         trainer = Trainer(args, log)
         train_dataset, _ = get_dataset(args, args.train_datasets, args.train_dir, tokenizer, 'train')
-        """
-        if args.model_type == "mlm_qa_alt":
-            masked_train_dataset = get_masked_dataset(args, args.train_datasets, args.train_dir, tokenizer)
-
-            train_masked_loader = DataLoader(masked_train_dataset,
-            train_masked_loader = DataLoader(train_dataset,
-                                    batch_size=args.batch_size,
-                                    sampler=RandomSampler(train_dataset))
-                                    """
         log.info("Preparing Validation Data...")
         val_dataset, val_dict = get_dataset(args, args.train_datasets, args.val_dir, tokenizer, 'val')
         train_loader = DataLoader(train_dataset,

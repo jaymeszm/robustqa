@@ -73,7 +73,7 @@ def random_swap(sent):
     #sent[first_index] = temp1
     #sent[second_index] = temp
     #return ' '.join(sent) + " "
-    n = int(len(sent) * .03)
+    n = int(len(sent) * 0)
     new_words = sent.copy()
     for _ in range(n):
         random_idx_1 = random.randint(0, len(new_words)-1)
@@ -119,7 +119,7 @@ def download(model_name):
     return tokenizer, model
 
 # download model for English -> Spanish                                                               
-tmp_lang_tokenizer, tmp_lang_model = download(f'Helsinki-NLP/opus-mt-en-ROMANCE'                          
+tmp_lang_tokenizer, tmp_lang_model = download(f'Helsinki-NLP/opus-mt-en-ROMANCE')                          
 # download model for Spanish -> English
 src_lang_tokenizer, src_lang_model = download(f'Helsinki-NLP/opus-mt-ROMANCE-en')   
 
@@ -146,7 +146,6 @@ def back_translate(texts, language_src, language_dst):
 def back_translator(context):
     en2de = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.en-fr',
                        tokenizer='moses', bpe='subword_nmt')
-
     # Batched translation
     translated = [en2de.translate(context[i:(i+1023)]) for i in range(0, len(context) , 1023)]
 
@@ -333,30 +332,27 @@ class QADataset(Dataset):
         return len(self.encodings['input_ids'])
 
 
-def read_squad(path, split_name):
+def read_squad(path, split_name, augmentation):
     path = Path(path)
     with open(path, 'rb') as f:
         squad_dict = json.load(f)
     data_dict = {'question': [], 'context': [], 'id': [], 'answer': []}
     augment = False
-    if split_name == 'trainoo':
-        n = 3
+    if augmentation:
         augment = True
+        if split_name == 'trainoo':
+            n = 3
     else:
         n = 1
     for i in range(0, n):
         for group in squad_dict['data']:
             for passage in group['paragraphs']:
                 context = passage['context']
-                #print(context)
                 if augment and i == 1:
                     context = back_translate(context, "en", "fr")
-#                    print(context)
                 num = random.randint(0,4)
-#                print(num) 
-                if (augment and i == 2) or (split_name == 'train' and num == 2):     
+                if augment and ((i == 2) or (split_name == 'train' and num == 2)):     
                     context = data_augmentation(context, .1)
-                 #   print(context)
                 for qa in passage['qas']:
                     question = qa['question']
                     if augment and i == 1:

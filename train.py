@@ -238,38 +238,26 @@ class Trainer():
         return best_scores
 
 
-def get_dataset(args, datasets, data_dir, tokenizer, split_name):
+def get_dataset(args, datasets, data_dir, tokenizer, split_name, augmentation=False):
     datasets = datasets.split(',')
     dataset_dict = None
     dataset_name = ''
     out = ['race','relation_extraction', 'duorc']
     for dataset in datasets:
-        dataset_name += f'_{dataset}'
         if dataset in out:
-            print("Here I am")
             name = split_name + "oo"
-            print(name)
         else:
             name = split_name
-        dataset_dict_curr = util.read_squad(f'{data_dir}/{dataset}', name)
-        dataset_dict = util.merge(dataset_dict, dataset_dict_curr)
-    if split_name == 'train':
-        #back_translation_aug = naw.BackTranslationAug(from_model_name='transformer.wmt19.en-de', to_model_name='transformer.wmt19.de-en')
-        #print(dataset_dict['context'])
-        #look = sorted(dataset_dict,key=lambda x: len(x['context']))
+        if not (name == "trainoo" and not augmentation): 
+            dataset_name += f'_{dataset}'
+            dataset_dict_curr = util.read_squad(f'{data_dir}/{dataset}', name, augmentation)
+            dataset_dict = util.merge(dataset_dict, dataset_dict_curr)
+    if split_name == 'train' and augmentation:
         zipped = zip(dataset_dict['question'], dataset_dict['context'], dataset_dict['id'], dataset_dict['answer'])
         look = zip(*sorted(zipped, key=lambda x: len(x[1])))
-        #print(look)
-        #for key, value in dataset_dict.items():
-        #    print(key)
         question, context, ids, answer  = map(list, look)
         d = {'key': 'value'}
         d['question'] = question
-        #print(sentence)
-       # augmented = util.back_translate(context, 'en', 'fr')
-        #print(augmented)
-        #back_translation_aug.augment(sentence) for sentence in context]
-        #print(augmented)
         d['context'] = context
         d['id'] = ids
         d['answer'] = answer
@@ -296,7 +284,7 @@ def main():
         log.info("Preparing Training Data...")
         args.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         trainer = Trainer(args, log)
-        train_dataset, _ = get_dataset(args, args.train_datasets, args.train_dir, tokenizer, 'train')
+        train_dataset, _ = get_dataset(args, args.train_datasets, args.train_dir, tokenizer, 'train', augmentation=args.augmentation)
         log.info("Preparing Validation Data...")
         val_dataset, val_dict = get_dataset(args, args.val_datasets, args.val_dir, tokenizer, 'val')
         train_loader = DataLoader(train_dataset,

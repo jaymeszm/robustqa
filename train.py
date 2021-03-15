@@ -10,13 +10,12 @@ from transformers import DistilBertForQuestionAnswering
 from transformers import AdamW
 from tensorboardX import SummaryWriter
 
-
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import RandomSampler, SequentialSampler
 from args import get_train_test_args
 from custom_models import DistilBertForMLMQA
-
 from tqdm import tqdm
+
 
 def prepare_eval_data(dataset_dict, tokenizer):
     tokenized_examples = tokenizer(dataset_dict['question'],
@@ -48,7 +47,6 @@ def prepare_eval_data(dataset_dict, tokenizer):
         ]
 
     return tokenized_examples
-
 
 
 def prepare_train_data(dataset_dict, tokenizer):
@@ -110,7 +108,7 @@ def prepare_train_data(dataset_dict, tokenizer):
             context = dataset_dict['context'][sample_index]
             offset_st = offsets[tokenized_examples['start_positions'][-1]][0]
             offset_en = offsets[tokenized_examples['end_positions'][-1]][1]
-            if context[offset_st : offset_en] != answer['text'][0]:
+            if context[offset_st: offset_en] != answer['text'][0]:
                 inaccurate += 1
 
     total = len(tokenized_examples['id'])
@@ -159,12 +157,12 @@ def read_and_process_masked(args, tokenizer, dir_name, datasets):
     return masked_examples
 
 def read_and_process(args, tokenizer, dataset_dict, dir_name, dataset_name, split):
-    #TODO: cache this if possible
+    # TODO: cache this if possible
     cache_path = f'{dir_name}/{dataset_name}_encodings.pt'
     if os.path.exists(cache_path) and not args.recompute_features:
         tokenized_examples = util.load_pickle(cache_path)
     else:
-        if split=='train':
+        if split == 'train':
             tokenized_examples = prepare_train_data(dataset_dict, tokenizer)
         else:
             tokenized_examples = prepare_eval_data(dataset_dict, tokenizer)
@@ -175,8 +173,7 @@ def get_masked_dataset(args, datasets, data_dir, tokenizer):
     masked_encodings = read_and_process_masked(args, tokenizer, data_dir, datasets)
     return util.MLMDataset(masked_encodings)
 
-
-#TODO: use a logger, use tensorboard
+# TODO: use a logger, use tensorboard
 class Trainer():
     def __init__(self, args, log):
         self.lr = args.lr
@@ -221,8 +218,8 @@ class Trainer():
         start_logits = torch.cat(all_start_logits).cpu().numpy()
         end_logits = torch.cat(all_end_logits).cpu().numpy()
         preds = util.postprocess_qa_predictions(data_dict,
-                                                 data_loader.dataset.encodings,
-                                                 (start_logits, end_logits))
+                                                data_loader.dataset.encodings,
+                                                (start_logits, end_logits))
         if split == 'validation':
             results = util.eval_dicts(data_dict, preds)
             results_list = [('F1', results['F1']),
@@ -411,16 +408,35 @@ class Trainer():
                     global_idx += 1
         return best_scores
 
-def get_dataset(args, datasets, data_dir, tokenizer, split_name):
+
+def get_dataset(args, datasets, data_dir, tokenizer, split_name, augmentation=False):
     datasets = datasets.split(',')
     dataset_dict = None
-    dataset_name=''
+    dataset_name = ''
+    out = ['race','relation_extraction', 'duorc']
     for dataset in datasets:
-        dataset_name += f'_{dataset}'
-        dataset_dict_curr = util.read_squad(f'{data_dir}/{dataset}')
-        dataset_dict = util.merge(dataset_dict, dataset_dict_curr)
+        if dataset in out:
+            name = split_name + "oo"
+        else:
+            name = split_name
+        if not (name == "trainoo" and not augmentation): 
+            dataset_name += f'_{dataset}'
+            dataset_dict_curr = util.read_squad(f'{data_dir}/{dataset}', name, augmentation)
+            dataset_dict = util.merge(dataset_dict, dataset_dict_curr)
+    if split_name == 'train' and augmentation:
+        zipped = zip(dataset_dict['question'], dataset_dict['context'], dataset_dict['id'], dataset_dict['answer'])
+        look = zip(*sorted(zipped, key=lambda x: len(x[1])))
+        question, context, ids, answer  = map(list, look)
+        d = {'key': 'value'}
+        d['question'] = question
+        d['context'] = context
+        d['id'] = ids
+        d['answer'] = answer
+    else:
+        d = dataset_dict
     data_encodings = read_and_process(args, tokenizer, dataset_dict, data_dir, dataset_name, split_name)
-    return util.QADataset(data_encodings, train=(split_name=='train')), dataset_dict
+    return util.QADataset(data_encodings, train=(split_name == 'train')), dataset_dict
+
 
 def main():
     # define parser and arguments
@@ -444,12 +460,12 @@ def main():
         log.info("Preparing Training Data...")
         args.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         trainer = Trainer(args, log)
-        train_dataset, _ = get_dataset(args, args.train_datasets, args.train_dir, tokenizer, 'train')
+        train_dataset, _ = get_dataset(args, args.train_datasets, args.train_dir, tokenizer, 'train', augmentation=args.augmentation)
         log.info("Preparing Validation Data...")
-        val_dataset, val_dict = get_dataset(args, args.train_datasets, args.val_dir, tokenizer, 'val')
+        val_dataset, val_dict = get_dataset(args, args.val_datasets, args.val_dir, tokenizer, 'val')
         train_loader = DataLoader(train_dataset,
-                                batch_size=args.batch_size,
-                                sampler=RandomSampler(train_dataset))
+                                  batch_size=args.batch_size,
+                                  sampler=RandomSampler(train_dataset))
         val_loader = DataLoader(val_dataset,
                                 batch_size=args.batch_size,
                                 sampler=SequentialSampler(val_dataset))
@@ -467,9 +483,11 @@ def main():
         model = DistilBertForQuestionAnswering.from_pretrained(checkpoint_path)
         model.to(args.device)
         eval_dataset, eval_dict = get_dataset(args, args.eval_datasets, args.eval_dir, tokenizer, split_name)
+        #print(list(eval_dataset))
         eval_loader = DataLoader(eval_dataset,
                                  batch_size=args.batch_size,
                                  sampler=SequentialSampler(eval_dataset))
+        #print(list(eval_loader))
         eval_preds, eval_scores = trainer.evaluate(model, eval_loader,
                                                    eval_dict, return_preds=True,
                                                    split=split_name)

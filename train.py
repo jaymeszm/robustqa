@@ -350,10 +350,9 @@ def main():
             model = DistilBertForMaskedLM.from_pretrained(checkpoint_path)
         else:
             model = DistilBertForMaskedLM.from_pretrained('distilbert-base-uncased')
-        model.to(args.device)
         train_dataset = get_masked_dataset(args, tokenizer, args.train_dir, args.train_datasets, args.max_seq_length)
         log.info("Preparing Masked Validation Data...")
-        val_dataset = get_masked_dataset(args, tokenizer, args.val_dir, args.train_datasets, args.max_seq_length)
+        val_dataset = get_masked_dataset(args, tokenizer, args.val_dir, args.val_datasets, args.max_seq_length)
         train_loader = DataLoader(train_dataset,
                                   batch_size=args.batch_size,
                                   sampler=RandomSampler(train_dataset))
@@ -380,7 +379,7 @@ def main():
         trainer = Trainer(args, log)
         train_dataset, _ = get_dataset(args, args.train_datasets, args.train_dir, tokenizer, 'train')
         log.info("Preparing Validation Data...")
-        val_dataset, val_dict = get_dataset(args, args.train_datasets, args.val_dir, tokenizer, 'val')
+        val_dataset, val_dict = get_dataset(args, args.val_datasets, args.val_dir, tokenizer, 'val')
         train_loader = DataLoader(train_dataset,
                                 batch_size=args.batch_size,
                                 sampler=RandomSampler(train_dataset))

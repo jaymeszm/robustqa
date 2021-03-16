@@ -18,9 +18,11 @@ from string import punctuation, digits
 from transformers import MarianMTModel, MarianTokenizer
 
 import mosestokenizer
+
 device = "cuda:0"
 
 qwerty = ' qwertyuiopasdfghjklzxcvbnm'
+
 
 def set_seed(seed):
     random.seed(seed)
@@ -28,22 +30,12 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-# taken from eda
 def get_synonyms(word):
-    #synonyms = []
-    synonyms = set()
+    synonyms = []
     for syn in wordnet.synsets(word):
-        #for pot in syn.lemmas():
-        #    synonyms.append("".join([char for char in pot.name().replace("_", " ") \
-         #                            if char in qwerty]))
-    #return synonyms
-        for l in syn.lemmas():
-            synonym = l.name().replace("_", " ").replace("-", " ").lower()
-            synonym = "".join([char for char in synonym if char in ' qwertyuiopasdfghjklzxcvbnm'])
-            synonyms.add(synonym)
-    if word in synonyms:
-        synonyms.remove(word)
-    return list(synonyms)
+        for pot in syn.lemmas():
+            synonyms.append("".join([char for char in pot.name().replace("_", " ") if char in qwerty]))
+    return synonyms
 
 
 def synonym_replacement(sent):
@@ -64,64 +56,35 @@ def synonym_replacement(sent):
 
 
 def random_swap(sent):
-    #first_index = rand.int(0, len(sent))
-    #second_index = rand.int(0, len(sent))
-    #if first_index == second_index:
-    #    second_index = rand.int(0, len(sent))
-    #temp = sent[first_index]
-    #temp1 = sent[second_index]
-    #sent[first_index] = temp1
-    #sent[second_index] = temp
-    #return ' '.join(sent) + " "
-    n = int(len(sent) * 0)
-    new_words = sent.copy()
-    for _ in range(n):
-        random_idx_1 = random.randint(0, len(new_words)-1)
-        random_idx_2 = random_idx_1
-        counter = 0
-        while random_idx_2 == random_idx_1:
-            random_idx_2 = random.randint(0, len(new_words)-1)
-            counter += 1
-            if counter > 3:
-                break
-        new_words[random_idx_1], new_words[random_idx_2] = new_words[random_idx_2], new_words[random_idx_1] 
-    return ' '.join(new_words) + " "
+    for _ in range(2):
+        first_index = random.randint(0, len(sent))
+        second_index = random.randint(0, len(sent))
+        if first_index == second_index:
+            second_index = random.randint(0, len(sent))
+        temp = sent[first_index]
+        temp1 = sent[second_index]
+        sent[first_index] = temp1
+        sent[second_index] = temp
+        return ' '.join(sent) + " "
 
 
 def data_augmentation(sentence, probability):
     sentence_alt = ''.join([i for i in sentence.lower() if i not in punctuation])
     sent = sentence_alt.split()
-    return random_swap(synonym_replacement(sentence.split()))
+    return random_swap(synonym_replacement(sent))
 
 
-def sentenceCreator():
-    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-    model = GPT2LMHeadModel.from_pretrained('gpt2')
-    return tokenizer, model
-
-
-def createSequence(sentence, model, tokenizer):
-    inputs = tokenizer.encode(sentence, return_tensor='pt')
-    outputs = model.generate(inputs, max_length=150, do_sample=True,
-                             top_k=50, top_p=0.9,
-                             length_penalty=1.5,
-                             repetition_penalty=1.2,
-                             temperature=1.2)
-    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return str(text)
-
-
- # Helper function to download data for a language
 def download(model_name):
     tokenizer = MarianTokenizer.from_pretrained(model_name)
     model = MarianMTModel.from_pretrained(model_name).to('cuda').half()
     model = model.to(device)
     return tokenizer, model
 
-# download model for English -> Spanish                                                               
-tmp_lang_tokenizer, tmp_lang_model = download(f'Helsinki-NLP/opus-mt-en-ROMANCE')                          
+# download model for English -> Spanish
+tmp_lang_tokenizer, tmp_lang_model = download(f'Helsinki-NLP/opus-mt-en-ROMANCE')
 # download model for Spanish -> English
-src_lang_tokenizer, src_lang_model = download(f'Helsinki-NLP/opus-mt-ROMANCE-en')   
+src_lang_tokenizer, src_lang_model = download(f'Helsinki-NLP/opus-mt-ROMANCE-en')
+
 
 def translate(texts, model, tokenizer, language):
     translations = []
@@ -133,7 +96,7 @@ def translate(texts, model, tokenizer, language):
     batch = tokenizer.prepare_seq2seq_batch(my_text, return_tensors="pt")
     batch = batch.to(device)
     translated = model.generate(**batch)
-    french: List[str]  = tokenizer.batch_decode(translated, skip_special_tokens=True)
+    french: List[str] = tokenizer.batch_decode(translated, skip_special_tokens=True)
     translations.extend(french)
     return " ".join(translations)
 
@@ -143,16 +106,18 @@ def back_translate(texts, language_src, language_dst):
     back_translated = translate(translated, src_lang_model, src_lang_tokenizer, language_src)
     return back_translated
 
+
 def back_translator(context):
     en2de = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.en-fr',
-                       tokenizer='moses', bpe='subword_nmt')
+                           tokenizer='moses', bpe='subword_nmt')
     # Batched translation
-    translated = [en2de.translate(context[i:(i+1023)]) for i in range(0, len(context) , 1023)]
+    translated = [en2de.translate(context[i:(i + 1023)]) for i in range(0, len(context), 1023)]
 
     de2en = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.fr-en',
-                       tokenizer='moses', bpe='subword_nmt')
+                           tokenizer='moses', bpe='subword_nmt')
 
-    return [de2en.translate(translated[i:(i+1023)]) for i in range(0, len(translated) , 1023)]
+    return [de2en.translate(translated[i:(i + 1023)]) for i in range(0, len(translated), 1023)]
+
 
 def load_pickle(path):
     with open(path, 'rb') as f:
@@ -362,8 +327,8 @@ def read_squad(path, split_name, augmentation):
                 context = passage['context']
                 if augment and i == 1:
                     context = back_translate(context, "en", "fr")
-                num = random.randint(0,4)
-                if augment and ((i == 2) or (split_name == 'train' and num == 2)):     
+                num = random.randint(0, 4)
+                if augment and ((i == 2) or (split_name == 'train' and num == 2)):
                     context = data_augmentation(context, .1)
                 for qa in passage['qas']:
                     question = qa['question']

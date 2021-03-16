@@ -426,7 +426,7 @@ def get_dataset(args, datasets, data_dir, tokenizer, split_name, augmentation=Fa
     if split_name == 'train' and augmentation:
         zipped = zip(dataset_dict['question'], dataset_dict['context'], dataset_dict['id'], dataset_dict['answer'])
         look = zip(*sorted(zipped, key=lambda x: len(x[1])))
-        question, context, ids, answer  = map(list, look)
+        question, context, ids, answer = map(list, look)
         d = {'key': 'value'}
         d['question'] = question
         d['context'] = context
@@ -434,7 +434,7 @@ def get_dataset(args, datasets, data_dir, tokenizer, split_name, augmentation=Fa
         d['answer'] = answer
     else:
         d = dataset_dict
-    data_encodings = read_and_process(args, tokenizer, dataset_dict, data_dir, dataset_name, split_name)
+    data_encodings = read_and_process(args, tokenizer, d, data_dir, dataset_name, split_name)
     return util.QADataset(data_encodings, train=(split_name == 'train')), dataset_dict
 
 

@@ -443,12 +443,22 @@ def main():
     args = get_train_test_args()
 
     util.set_seed(args.seed)
+
     if args.model_type == "qa":
-        model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
+        if args.pretrain_dir is not None:
+            checkpoint_path = os.path.join(args.pretrain_dir, 'checkpoint')
+            model = DistilBertForQuestionAnswering.from_pretrained(checkpoint_path)
+        else: model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
     elif args.model_type == "mlm_qa":
-        model = DistilBertForMLMQA.from_pretrained("distilbert-base-uncased")
+        if args.pretrain_dir is not None:
+            checkpoint_path = os.path.join(args.pretrain_dir, 'checkpoint')
+            model = DistilBertForMLMQA.from_pretrained(checkpoint_path)
+        else: model = DistilBertForMLMQA.from_pretrained("distilbert-base-uncased")
     else: #args.model_type == "mlm_qa_alt"
-        model = DistilBertForMLMQA.from_pretrained("distilbert-base-uncased")
+        if args.pretrain_dir is not None:
+            checkpoint_path = os.path.join(args.pretrain_dir, 'checkpoint')
+            model = DistilBertForMLMQA.from_pretrained(checkpoint_path)
+        else: model = DistilBertForMLMQA.from_pretrained("distilbert-base-uncased")
     tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
 
     if args.do_train:

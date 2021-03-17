@@ -26,5 +26,6 @@ def get_train_test_args():
     parser.add_argument('--visualize-predictions', action='store_true')
     parser.add_argument('--eval-every', type=int, default=5000)
     parser.add_argument('--model-type', type=str, default='qa')
+    parser.add_argument('--pretrain-dir', type=str, default=None)
     args = parser.parse_args()
     return args

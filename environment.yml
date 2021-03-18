@@ -15,4 +15,9 @@ dependencies:
     - tensorboard
     - tensorflow
     - tensorboardX
+    - nltk
+    - mosestokenizer
+
+
+
 

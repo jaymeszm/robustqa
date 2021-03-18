@@ -10,12 +10,12 @@ from transformers import DistilBertForQuestionAnswering
 from transformers import AdamW
 from tensorboardX import SummaryWriter
 
-
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import RandomSampler, SequentialSampler
 from args import get_train_test_args
-
+from custom_models import DistilBertForMLMQA
 from tqdm import tqdm
+
 
 def prepare_eval_data(dataset_dict, tokenizer):
     tokenized_examples = tokenizer(dataset_dict['question'],
@@ -47,7 +47,6 @@ def prepare_eval_data(dataset_dict, tokenizer):
         ]
 
     return tokenized_examples
-
 
 
 def prepare_train_data(dataset_dict, tokenizer):
@@ -109,7 +108,7 @@ def prepare_train_data(dataset_dict, tokenizer):
             context = dataset_dict['context'][sample_index]
             offset_st = offsets[tokenized_examples['start_positions'][-1]][0]
             offset_en = offsets[tokenized_examples['end_positions'][-1]][1]
-            if context[offset_st : offset_en] != answer['text'][0]:
+            if context[offset_st: offset_en] != answer['text'][0]:
                 inaccurate += 1
 
     total = len(tokenized_examples['id'])
@@ -117,23 +116,64 @@ def prepare_train_data(dataset_dict, tokenizer):
     return tokenized_examples
 
 
+def mask_train_data(encodings, tokenizer, mask_prob=0.15):
+    """ Take batch encodings and mask out tokens given by mlm probability """
+    labels = encodings['input_ids'].detach().clone() #a tensor of shape b x seq_length
+    prob_matrix = torch.full_like(labels, mask_prob, dtype=torch.float)
+    # set prob for special tokens to 0
+    prob_matrix.masked_fill_(encodings['special_tokens_mask'] > 0, 0.0)
+    mask_matrix = torch.bernoulli(prob_matrix).bool() # returns boolean matrix of 0 (no mask) and 1 (mask)
+
+    # set all masked tokens to [MASK]
+    encodings['input_ids'][mask_matrix] = tokenizer.mask_token_id
+
+    # set labels for non-masked tokens to -100
+    labels[~mask_matrix] = -100
+    encodings['labels'] = labels
+    return encodings
+
+def read_and_process_masked(args, tokenizer, dir_name, datasets):
+    datasets = datasets.split(',')
+    dataset_name=''
+    for dataset in datasets:
+        dataset_name += f'_{dataset}'
+    text_path = f'{dir_name}/{dataset_name}_context.txt'
+    context_cache_path = f'{dir_name}/{dataset_name}_context_encodings.pt'
+    mask_cache_path = f'{dir_name}/{dataset_name}_masked_encodings.pt'
+
+    if os.path.exists(mask_cache_path) and not args.recompute_mlm_features:
+        masked_examples = util.load_pickle(mask_cache_path)
+    else:
+        if os.path.exists(context_cache_path):
+            encodings = util.load_pickle(context_cache_path)
+        else:
+            if os.path.exists(text_path):
+                encodings = util.encode_context_data(tokenizer, dir_name, dataset_name)
+            else:
+                util.save_context(dir_name, datasets, dataset_name)
+                encodings = util.encode_context_data(tokenizer, dir_name, dataset_name)
+        masked_examples = mask_train_data(encodings, tokenizer)
+        util.save_pickle(masked_examples, mask_cache_path)
+    return masked_examples
 
 def read_and_process(args, tokenizer, dataset_dict, dir_name, dataset_name, split):
-    #TODO: cache this if possible
+    # TODO: cache this if possible
     cache_path = f'{dir_name}/{dataset_name}_encodings.pt'
     if os.path.exists(cache_path) and not args.recompute_features:
         tokenized_examples = util.load_pickle(cache_path)
     else:
-        if split=='train':
+        if split == 'train':
             tokenized_examples = prepare_train_data(dataset_dict, tokenizer)
         else:
             tokenized_examples = prepare_eval_data(dataset_dict, tokenizer)
         util.save_pickle(tokenized_examples, cache_path)
     return tokenized_examples
 
+def get_masked_dataset(args, datasets, data_dir, tokenizer):
+    masked_encodings = read_and_process_masked(args, tokenizer, data_dir, datasets)
+    return util.MLMDataset(masked_encodings)
 
-
-#TODO: use a logger, use tensorboard
+# TODO: use a logger, use tensorboard
 class Trainer():
     def __init__(self, args, log):
         self.lr = args.lr
@@ -178,8 +218,8 @@ class Trainer():
         start_logits = torch.cat(all_start_logits).cpu().numpy()
         end_logits = torch.cat(all_end_logits).cpu().numpy()
         preds = util.postprocess_qa_predictions(data_dict,
-                                                 data_loader.dataset.encodings,
-                                                 (start_logits, end_logits))
+                                                data_loader.dataset.encodings,
+                                                (start_logits, end_logits))
         if split == 'validation':
             results = util.eval_dicts(data_dict, preds)
             results_list = [('F1', results['F1']),
@@ -192,7 +232,7 @@ class Trainer():
             return preds, results
         return results
 
-    def train(self, model, train_dataloader, eval_dataloader, val_dict):
+    def train(self, model, train_dataloader, eval_dataloader, val_dict, mlmqa=False):
         device = self.device
         model.to(device)
         optim = AdamW(model.parameters(), lr=self.lr)
@@ -210,9 +250,14 @@ class Trainer():
                     attention_mask = batch['attention_mask'].to(device)
                     start_positions = batch['start_positions'].to(device)
                     end_positions = batch['end_positions'].to(device)
-                    outputs = model(input_ids, attention_mask=attention_mask,
-                                    start_positions=start_positions,
-                                    end_positions=end_positions)
+                    if mlmqa:
+                        outputs = model(input_ids, attention_mask=attention_mask,
+                                        start_positions=start_positions,
+                                        end_positions=end_positions, apply_input_mask=True)
+                    else:
+                        outputs = model(input_ids, attention_mask=attention_mask,
+                                        start_positions=start_positions,
+                                        end_positions=end_positions)
                     loss = outputs[0]
                     loss.backward()
                     optim.step()
@@ -240,23 +285,180 @@ class Trainer():
                     global_idx += 1
         return best_scores
 
-def get_dataset(args, datasets, data_dir, tokenizer, split_name):
+    def train_mlm_qa_alt(self, model, train_dataloader, eval_dataloader, val_dict, masked_train_dl):
+        device = self.device
+        model.to(device)
+        optim = AdamW(model.parameters(), lr=self.lr)
+        global_idx = 0
+        best_scores = {'F1': -1.0, 'EM': -1.0}
+        tbx = SummaryWriter(self.save_dir)
+        print(len(train_dataloader))
+        print(len(masked_train_dl))
+
+        for epoch_num in range(self.num_epochs):
+            self.log.info(f'Epoch: {epoch_num}')
+            with torch.enable_grad(), tqdm(total=len(train_dataloader.dataset)) as progress_bar:
+                for (mbatch, batch) in zip(masked_train_dl, train_dataloader):
+                    optim.zero_grad()
+                    model.train()
+                    # masked/MLM layer
+                    input_ids = mbatch['input_ids'].to(device)
+                    attention_mask = mbatch['attention_mask'].to(device)
+                    labels = mbatch['labels'].to(device)
+                    outputs = model(input_ids, attention_mask=attention_mask,
+                                    labels=labels, qa=False)
+                    # backward
+                    loss = outputs[0]
+                    loss.backward()
+                    optim.step()
+
+                    # unmasked/QA layer
+                    input_ids = batch['input_ids'].to(device)
+                    attention_mask = batch['attention_mask'].to(device)
+                    start_positions = batch['start_positions'].to(device)
+                    end_positions = batch['end_positions'].to(device)
+                    outputs = model(input_ids, attention_mask=attention_mask,
+                                    start_positions=start_positions,
+                                    end_positions=end_positions, qa=True)
+                                   
+                    loss = outputs[0]
+                    loss.backward()
+
+                    optim.step()
+                    progress_bar.update(len(input_ids))
+                    progress_bar.set_postfix(epoch=epoch_num, NLL=loss.item())
+                    tbx.add_scalar('train/NLL', loss.item(), global_idx)
+                    if (global_idx % self.eval_every) == 0:
+                        self.log.info(f'Evaluating at step {global_idx}...')
+                        preds, curr_score = self.evaluate(model, eval_dataloader, val_dict, return_preds=True)
+                        results_str = ', '.join(f'{k}: {v:05.2f}' for k, v in curr_score.items())
+                        self.log.info('Visualizing in TensorBoard...')
+                        for k, v in curr_score.items():
+                            tbx.add_scalar(f'val/{k}', v, global_idx)
+                        self.log.info(f'Eval {results_str}')
+                        if self.visualize_predictions:
+                            util.visualize(tbx,
+                                           pred_dict=preds,
+                                           gold_dict=val_dict,
+                                           step=global_idx,
+                                           split='val',
+                                           num_visuals=self.num_visuals)
+                        if curr_score['F1'] >= best_scores['F1']:
+                            best_scores = curr_score
+                            self.save(model)
+                    global_idx += 1
+        return best_scores
+
+    def train_mlm_qa_alt_2(self, model, train_dataloader, eval_dataloader, val_dict):
+        device = self.device
+        model.to(device)
+        optim = AdamW(model.parameters(), lr=self.lr)
+        global_idx = 0
+        best_scores = {'F1': -1.0, 'EM': -1.0}
+        tbx = SummaryWriter(self.save_dir)
+
+        for epoch_num in range(self.num_epochs):
+            self.log.info(f'Epoch: {epoch_num}')
+            with torch.enable_grad(), tqdm(total=len(train_dataloader.dataset)) as progress_bar:
+                for idx, batch in enumerate(train_dataloader):
+                    optim.zero_grad()
+                    model.train()
+                    # masked/MLM layer
+                    input_ids = batch['input_ids'].to(device)
+                    attention_mask = batch['attention_mask'].to(device)
+                    start_positions = batch['start_positions'].to(device)
+                    end_positions = batch['end_positions'].to(device)
+                    
+                    if (idx % 2 == 1):
+                        outputs = model(input_ids, attention_mask=attention_mask,
+                                        start_positions=start_positions,
+                                        end_positions=end_positions, qa=False, apply_input_mask=True)
+                    else:
+                        outputs = model(input_ids, attention_mask=attention_mask,
+                                        start_positions=start_positions,
+                                        end_positions=end_positions, qa=True, apply_input_mask=False)
+
+                    # backward
+                    loss = outputs[0]
+                    print(loss)
+                    loss.backward()
+                    optim.step()
+
+                    progress_bar.update(len(input_ids))
+                    progress_bar.set_postfix(epoch=epoch_num, NLL=loss.item())
+                    tbx.add_scalar('train/NLL', loss.item(), global_idx)
+                    if (global_idx % self.eval_every) == 0:
+                        self.log.info(f'Evaluating at step {global_idx}...')
+                        preds, curr_score = self.evaluate(model, eval_dataloader, val_dict, return_preds=True)
+                        results_str = ', '.join(f'{k}: {v:05.2f}' for k, v in curr_score.items())
+                        self.log.info('Visualizing in TensorBoard...')
+                        for k, v in curr_score.items():
+                            tbx.add_scalar(f'val/{k}', v, global_idx)
+                        self.log.info(f'Eval {results_str}')
+                        if self.visualize_predictions:
+                            util.visualize(tbx,
+                                           pred_dict=preds,
+                                           gold_dict=val_dict,
+                                           step=global_idx,
+                                           split='val',
+                                           num_visuals=self.num_visuals)
+                        if curr_score['F1'] >= best_scores['F1']:
+                            best_scores = curr_score
+                            self.save(model)
+                    global_idx += 1
+        return best_scores
+
+
+def get_dataset(args, datasets, data_dir, tokenizer, split_name, augmentation=False):
     datasets = datasets.split(',')
     dataset_dict = None
-    dataset_name=''
+    dataset_name = ''
+    out = ['race','relation_extraction', 'duorc']
     for dataset in datasets:
-        dataset_name += f'_{dataset}'
-        dataset_dict_curr = util.read_squad(f'{data_dir}/{dataset}')
-        dataset_dict = util.merge(dataset_dict, dataset_dict_curr)
-    data_encodings = read_and_process(args, tokenizer, dataset_dict, data_dir, dataset_name, split_name)
-    return util.QADataset(data_encodings, train=(split_name=='train')), dataset_dict
+        if dataset in out:
+            name = split_name + "oo"
+        else:
+            name = split_name
+        if not (name == "trainoo" and not augmentation): 
+            dataset_name += f'_{dataset}'
+            dataset_dict_curr = util.read_squad(f'{data_dir}/{dataset}', name, augmentation)
+            dataset_dict = util.merge(dataset_dict, dataset_dict_curr)
+    if split_name == 'train' and augmentation:
+        zipped = zip(dataset_dict['question'], dataset_dict['context'], dataset_dict['id'], dataset_dict['answer'])
+        look = zip(*sorted(zipped, key=lambda x: len(x[1])))
+        question, context, ids, answer = map(list, look)
+        d = {'key': 'value'}
+        d['question'] = question
+        d['context'] = context
+        d['id'] = ids
+        d['answer'] = answer
+    else:
+        d = dataset_dict
+    data_encodings = read_and_process(args, tokenizer, d, data_dir, dataset_name, split_name)
+    return util.QADataset(data_encodings, train=(split_name == 'train')), dataset_dict
+
 
 def main():
     # define parser and arguments
     args = get_train_test_args()
 
     util.set_seed(args.seed)
-    model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
+
+    if args.model_type == "qa":
+        if args.pretrain_dir is not None:
+            checkpoint_path = os.path.join(args.pretrain_dir, 'checkpoint')
+            model = DistilBertForQuestionAnswering.from_pretrained(checkpoint_path)
+        else: model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
+    elif args.model_type == "mlm_qa":
+        if args.pretrain_dir is not None:
+            checkpoint_path = os.path.join(args.pretrain_dir, 'checkpoint')
+            model = DistilBertForMLMQA.from_pretrained(checkpoint_path)
+        else: model = DistilBertForMLMQA.from_pretrained("distilbert-base-uncased")
+    else: #args.model_type == "mlm_qa_alt"
+        if args.pretrain_dir is not None:
+            checkpoint_path = os.path.join(args.pretrain_dir, 'checkpoint')
+            model = DistilBertForMLMQA.from_pretrained(checkpoint_path)
+        else: model = DistilBertForMLMQA.from_pretrained("distilbert-base-uncased")
     tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
 
     if args.do_train:
@@ -268,16 +470,20 @@ def main():
         log.info("Preparing Training Data...")
         args.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         trainer = Trainer(args, log)
-        train_dataset, _ = get_dataset(args, args.train_datasets, args.train_dir, tokenizer, 'train')
+        train_dataset, _ = get_dataset(args, args.train_datasets, args.train_dir, tokenizer, 'train', augmentation=args.augmentation)
         log.info("Preparing Validation Data...")
-        val_dataset, val_dict = get_dataset(args, args.train_datasets, args.val_dir, tokenizer, 'val')
+        val_dataset, val_dict = get_dataset(args, args.val_datasets, args.val_dir, tokenizer, 'val')
         train_loader = DataLoader(train_dataset,
-                                batch_size=args.batch_size,
-                                sampler=RandomSampler(train_dataset))
+                                  batch_size=args.batch_size,
+                                  sampler=RandomSampler(train_dataset))
         val_loader = DataLoader(val_dataset,
                                 batch_size=args.batch_size,
                                 sampler=SequentialSampler(val_dataset))
-        best_scores = trainer.train(model, train_loader, val_loader, val_dict)
+        if args.model_type == "mlm_qa_alt":
+            best_scores = trainer.train_mlm_qa_alt_2(model, train_loader, val_loader, val_dict)
+        else:
+            best_scores = trainer.train(model, train_loader, val_loader, val_dict, mlmqa= (args.model_type != "qa"))
+
     if args.do_eval:
         args.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         split_name = 'test' if 'test' in args.eval_dir else 'validation'
@@ -287,15 +493,17 @@ def main():
         model = DistilBertForQuestionAnswering.from_pretrained(checkpoint_path)
         model.to(args.device)
         eval_dataset, eval_dict = get_dataset(args, args.eval_datasets, args.eval_dir, tokenizer, split_name)
+        #print(list(eval_dataset))
         eval_loader = DataLoader(eval_dataset,
                                  batch_size=args.batch_size,
                                  sampler=SequentialSampler(eval_dataset))
+        #print(list(eval_loader))
         eval_preds, eval_scores = trainer.evaluate(model, eval_loader,
                                                    eval_dict, return_preds=True,
                                                    split=split_name)
         results_str = ', '.join(f'{k}: {v:05.2f}' for k, v in eval_scores.items())
         log.info(f'Eval {results_str}')
-        # Write submission file
+        # Write submission filee
         sub_path = os.path.join(args.save_dir, split_name + '_' + args.sub_file)
         log.info(f'Writing submission file to {sub_path}...')
         with open(sub_path, 'w', newline='', encoding='utf-8') as csv_fh:

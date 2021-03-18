@@ -12,21 +12,120 @@ import numpy as np
 from tqdm import tqdm
 from torch.utils.data import Dataset
 
+from nltk.corpus import stopwords, wordnet
+from random import choice, shuffle, uniform, randint
+from string import punctuation, digits
+from transformers import MarianMTModel, MarianTokenizer
+
+import mosestokenizer
+
+device = "cuda:0"
+
+qwerty = ' qwertyuiopasdfghjklzxcvbnm'
+
+
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+def get_synonyms(word):
+    synonyms = []
+    for syn in wordnet.synsets(word):
+        for pot in syn.lemmas():
+            synonyms.append("".join([char for char in pot.name().replace("_", " ") if char in qwerty]))
+    return synonyms
+
+
+def synonym_substitution(sentence):
+    n = int(len(sentence) * .1)
+    new_sentence = sentence.copy()
+    potential_words = [word for word in sentence if word not in stopwords.words('english')]
+    words_to_change = random.sample(potential_words, n)
+    for word in words_to_change:
+        synonyms = get_synonyms(word)
+        if len(synonyms) > 0:
+            index = random.randint(0, len(synonyms) - 1)
+            new_sentence = [synonyms[index] if word_1 == word else word_1 for word_1 in new_sentence]
+        random_syn = get_synonyms(str(random.sample(potential_words, 1)))
+        if len(random_syn) > 0:
+            new_sentence.insert(random.randint(0, len(new_sentence) - 1),
+                                random_syn[0])
+    return new_sentence
+
+
+def random_swap(sent):
+    for _ in range(2):
+        first_index = random.randint(0, len(sent))
+        second_index = random.randint(0, len(sent))
+        if first_index == second_index:
+            second_index = random.randint(0, len(sent))
+        temp = sent[first_index]
+        temp1 = sent[second_index]
+        sent[first_index] = temp1
+        sent[second_index] = temp
+        return ' '.join(sent) + " "
+
+
+def data_augmentation(sentence, probability):
+    sentence_alt = ''.join([i for i in sentence.lower() if i not in punctuation])
+    sent = sentence_alt.split()
+    return random_swap(synonym_substitution(sent))
+
+
+def download(model_name):
+    tokenizer = MarianTokenizer.from_pretrained(model_name)
+    model = MarianMTModel.from_pretrained(model_name).to('cuda').half()
+    model = model.to(device)
+    return tokenizer, model
+
+french_lang_tokenizer, french_lang_model = download(f'Helsinki-NLP/opus-mt-en-ROMANCE')
+english_lang_tokenizer, english_lang_model = download(f'Helsinki-NLP/opus-mt-ROMANCE-en')
+
+def translate(texts, model, tokenizer, language):
+    translations = []
+    my_text = []
+    chunks = texts.split()
+    per_line = 100
+    for i in range(0, len(chunks), per_line):
+        my_text.append(" ".join(chunks[i:i + per_line]))
+    batch = tokenizer.prepare_seq2seq_batch(my_text, return_tensors="pt")
+    batch = batch.to(device)
+    translated = model.generate(**batch)
+    french: List[str] = tokenizer.batch_decode(translated, skip_special_tokens=True)
+    translations.extend(french)
+    return " ".join(translations)
+
+
+def back_translate(texts, english, french):
+    translated = translate(texts, french_lang_model, french_lang_tokenizer, french)
+    back_translated = translate(translated, english_lang_model, english_lang_tokenizer, english)
+    return back_translated
+
+
+def back_translator(context):
+    french = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.en-fr',
+                           tokenizer='moses', bpe='subword_nmt')
+    translated = [french.translate(context[i:(i + 1023)]) for i in range(0, len(context), 1023)]
+
+    english = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.fr-en',
+                           tokenizer='moses', bpe='subword_nmt')
+
+    return [english.translate(translated[i:(i + 1023)]) for i in range(0, len(translated), 1023)]
+
+
 def load_pickle(path):
     with open(path, 'rb') as f:
         obj = pickle.load(f)
     return obj
 
+
 def save_pickle(obj, path):
     with open(path, 'wb') as f:
         pickle.dump(obj, f)
     return
+
 
 def visualize(tbx, pred_dict, gold_dict, step, split, num_visuals):
     """Visualize text examples to TensorBoard.
@@ -42,7 +141,7 @@ def visualize(tbx, pred_dict, gold_dict, step, split, num_visuals):
         return
     if num_visuals > len(pred_dict):
         num_visuals = len(pred_dict)
-    id2index = {curr_id : idx for idx, curr_id in enumerate(gold_dict['id'])}
+    id2index = {curr_id: idx for idx, curr_id in enumerate(gold_dict['id'])}
     visual_ids = np.random.choice(list(pred_dict), size=num_visuals, replace=False)
     for i, id_ in enumerate(visual_ids):
         pred = pred_dict[id_] or 'N/A'
@@ -55,7 +154,7 @@ def visualize(tbx, pred_dict, gold_dict, step, split, num_visuals):
                    + f'- **Context:** {context}\n'
                    + f'- **Answer:** {gold}\n'
                    + f'- **Prediction:** {pred}')
-        tbx.add_text(tag=f'{split}/{i+1}_of_{num_visuals}',
+        tbx.add_text(tag=f'{split}/{i + 1}_of_{num_visuals}',
                      text_string=tbl_fmt,
                      global_step=step)
 
@@ -73,15 +172,16 @@ def get_save_dir(base_dir, name, id_max=100):
 
 def filter_encodings(encodings):
     filter_idx = [idx for idx, val in enumerate(encodings['end_positions'])
-                 if not val]
+                  if not val]
     filter_idx = set(filter_idx)
-    encodings_filtered = {key : [] for key in encodings}
+    encodings_filtered = {key: [] for key in encodings}
     sz = len(encodings['input_ids'])
     for idx in range(sz):
         if idx not in filter_idx:
             for key in encodings:
                 encodings_filtered[key].append(encodings[key][idx])
     return encodings_filtered
+
 
 def merge(encodings, new_encoding):
     if not encodings:
@@ -90,6 +190,7 @@ def merge(encodings, new_encoding):
         for key in new_encoding:
             encodings[key] += new_encoding[key]
         return encodings
+
 
 def get_logger(log_dir, name):
     """Get a `logging.Logger` instance that prints to the console
@@ -102,12 +203,14 @@ def get_logger(log_dir, name):
     Returns:
         logger (logging.Logger): Logger instance for logging events.
     """
+
     class StreamHandlerWithTQDM(logging.Handler):
         """Let `logging` print without breaking `tqdm` progress bars.
 
         See Also:
             > https://stackoverflow.com/questions/38543506
         """
+
         def emit(self, record):
             try:
                 msg = self.format(record)
@@ -145,12 +248,14 @@ def get_logger(log_dir, name):
 
     return logger
 
+
 class AverageMeter:
     """Keep track of average values over time.
 
     Adapted from:
         > https://github.com/pytorch/examples/blob/master/imagenet/main.py
     """
+
     def __init__(self):
         self.avg = 0
         self.sum = 0
@@ -172,40 +277,69 @@ class AverageMeter:
         self.sum += val * num_samples
         self.avg = self.sum / self.count
 
+
 class QADataset(Dataset):
     def __init__(self, encodings, train=True):
         self.encodings = encodings
         self.keys = ['input_ids', 'attention_mask']
         if train:
             self.keys += ['start_positions', 'end_positions']
-        assert(all(key in self.encodings for key in self.keys))
+        assert (all(key in self.encodings for key in self.keys))
 
     def __getitem__(self, idx):
-        return {key : torch.tensor(self.encodings[key][idx]) for key in self.keys}
+        return {key: torch.tensor(self.encodings[key][idx]) for key in self.keys}
 
     def __len__(self):
         return len(self.encodings['input_ids'])
 
-def read_squad(path):
+class MLMDataset(Dataset):
+    def __init__(self, encodings):
+        self.encodings = encodings
+        self.keys = ['input_ids', 'attention_mask', 'labels']
+        assert(all(key in self.encodings for key in self.keys))
+
+    def __getitem__(self, idx):
+        return {key : self.encodings[key][idx].detach().clone() for key in self.keys}
+
+    def __len__(self):
+        return len(self.encodings['input_ids'])
+
+def read_squad(path, split_name, augmentation):
     path = Path(path)
     with open(path, 'rb') as f:
         squad_dict = json.load(f)
     data_dict = {'question': [], 'context': [], 'id': [], 'answer': []}
-    for group in squad_dict['data']:
-        for passage in group['paragraphs']:
-            context = passage['context']
-            for qa in passage['qas']:
-                question = qa['question']
-                if len(qa['answers']) == 0:
-                    data_dict['question'].append(question)
-                    data_dict['context'].append(context)
-                    data_dict['id'].append(qa['id'])
-                else:
-                    for answer in  qa['answers']:
+    augment = False
+    if augmentation:
+        augment = True
+        n = 1
+        if split_name == 'trainoo':
+            n = 3
+    else:
+        n = 1
+    for i in range(0, n):
+        for group in squad_dict['data']:
+            for passage in group['paragraphs']:
+                context = passage['context']
+                if augment and i == 1:
+                    context = back_translate(context, "en", "fr")
+                num = random.randint(0, 4)
+                if augment and ((i == 2) or (split_name == 'train' and num == 2)):
+                    context = data_augmentation(context, .1)
+                for qa in passage['qas']:
+                    question = qa['question']
+                    if augment and i == 1:
+                        question = back_translate(question, "en", "fr")
+                    if len(qa['answers']) == 0:
                         data_dict['question'].append(question)
                         data_dict['context'].append(context)
                         data_dict['id'].append(qa['id'])
-                        data_dict['answer'].append(answer)
+                    else:
+                        for answer in qa['answers']:
+                            data_dict['question'].append(question)
+                            data_dict['context'].append(context)
+                            data_dict['id'].append(qa['id'])
+                            data_dict['answer'].append(answer)
     id_map = ddict(list)
     for idx, qid in enumerate(data_dict['id']):
         id_map[qid].append(idx)
@@ -223,6 +357,7 @@ def read_squad(path):
             data_dict_collapsed['answer'].append({'answer_start': [answer['answer_start'] for answer in all_answers],
                                                   'text': [answer['text'] for answer in all_answers]})
     return data_dict_collapsed
+
 
 def add_token_positions(encodings, answers, tokenizer):
     start_positions = []
@@ -250,12 +385,13 @@ def add_end_idx(answers, contexts):
         # sometimes squad answers are off by a character or two – fix this
         if context[start_idx:end_idx] == gold_text:
             answer['answer_end'] = end_idx
-        elif context[start_idx-1:end_idx-1] == gold_text:
+        elif context[start_idx - 1:end_idx - 1] == gold_text:
             answer['answer_start'] = start_idx - 1
-            answer['answer_end'] = end_idx - 1     # When the gold label is off by one character
-        elif context[start_idx-2:end_idx-2] == gold_text:
+            answer['answer_end'] = end_idx - 1  # When the gold label is off by one character
+        elif context[start_idx - 2:end_idx - 2] == gold_text:
             answer['answer_start'] = start_idx - 2
-            answer['answer_end'] = end_idx - 2     # When the gold label is off by two characters
+            answer['answer_end'] = end_idx - 2  # When the gold label is off by two characters
+
 
 def convert_tokens(eval_dict, qa_id, y_start_list, y_end_list):
     """Convert predictions to tokens from the context.
@@ -284,6 +420,7 @@ def convert_tokens(eval_dict, qa_id, y_start_list, y_end_list):
         sub_dict[uuid] = context[start_idx: end_idx]
     return pred_dict, sub_dict
 
+
 def metric_max_over_ground_truths(metric_fn, prediction, ground_truths):
     if not ground_truths:
         return metric_fn(prediction, '')
@@ -296,7 +433,7 @@ def metric_max_over_ground_truths(metric_fn, prediction, ground_truths):
 
 def eval_dicts(gold_dict, pred_dict):
     avna = f1 = em = total = 0
-    id2index = {curr_id : idx for idx, curr_id in enumerate(gold_dict['id'])}
+    id2index = {curr_id: idx for idx, curr_id in enumerate(gold_dict['id'])}
     for curr_id in pred_dict:
         total += 1
         index = id2index[curr_id]
@@ -308,6 +445,7 @@ def eval_dicts(gold_dict, pred_dict):
     eval_dict = {'EM': 100. * em / total,
                  'F1': 100. * f1 / total}
     return eval_dict
+
 
 def postprocess_qa_predictions(examples, features, predictions,
                                n_best_size=20, max_answer_length=30):
@@ -323,7 +461,7 @@ def postprocess_qa_predictions(examples, features, predictions,
 
     # Let's loop over all the examples!
     for example_index in tqdm(range(len(examples['id']))):
-        example = {key : examples[key][example_index] for key in examples}
+        example = {key: examples[key][example_index] for key in examples}
         # Those are the indices of the features associated to the current example.
         feature_indices = features_per_example[example_index]
         prelim_predictions = []
@@ -348,19 +486,18 @@ def postprocess_qa_predictions(examples, features, predictions,
             if token_is_max_context:
                 token_is_max_context = token_is_max_context[feature_index]
 
-
             # Go through all possibilities for the `n_best_size` greater start and end logits.
-            start_indexes = np.argsort(start_logits)[-1 : -n_best_size - 1 : -1].tolist()
-            end_indexes = np.argsort(end_logits)[-1 : -n_best_size - 1 : -1].tolist()
+            start_indexes = np.argsort(start_logits)[-1: -n_best_size - 1: -1].tolist()
+            end_indexes = np.argsort(end_logits)[-1: -n_best_size - 1: -1].tolist()
             for start_index in start_indexes:
                 for end_index in end_indexes:
                     # Don't consider out-of-scope answers, either because the indices are out of bounds or correspond
                     # to part of the input_ids that are not in the context.
                     if (
-                        start_index >= len(offset_mapping)
-                        or end_index >= len(offset_mapping)
-                        or offset_mapping[start_index] is None
-                        or offset_mapping[end_index] is None
+                            start_index >= len(offset_mapping)
+                            or end_index >= len(offset_mapping)
+                            or offset_mapping[start_index] is None
+                            or offset_mapping[end_index] is None
                     ):
                         continue
                     # Don't consider answers with a length that is either = 0 or > max_answer_length.
@@ -387,7 +524,7 @@ def postprocess_qa_predictions(examples, features, predictions,
         context = example["context"]
         for pred in predictions:
             offsets = pred['offsets']
-            pred["text"] = context[offsets[0] : offsets[1]]
+            pred["text"] = context[offsets[0]: offsets[1]]
 
         # In the very rare edge case we have not a single non-null prediction, we create a fake prediction to avoid
         # failure.
@@ -411,13 +548,13 @@ def postprocess_qa_predictions(examples, features, predictions,
                 break
             i += 1
         if i == len(predictions):
-            import pdb; pdb.set_trace();
+            import pdb;
+            pdb.set_trace();
 
         best_non_null_pred = predictions[i]
         all_predictions[example["id"]] = best_non_null_pred["text"]
 
     return all_predictions
-
 
 
 # All methods below this line are from the official SQuAD 2.0 eval script
@@ -441,10 +578,12 @@ def normalize_answer(s):
 
     return white_space_fix(remove_articles(remove_punc(lower(s))))
 
+
 def get_tokens(s):
     if not s:
         return []
     return normalize_answer(s).split()
+
 
 def compute_em(a_gold, a_pred):
     return int(normalize_answer(a_gold) == normalize_answer(a_pred))

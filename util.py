@@ -108,15 +108,15 @@ def back_translate(texts, language_src, language_dst):
 
 
 def back_translator(context):
-    en2de = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.en-fr',
+    french = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.en-fr',
                            tokenizer='moses', bpe='subword_nmt')
     # Batched translation
-    translated = [en2de.translate(context[i:(i + 1023)]) for i in range(0, len(context), 1023)]
+    translated = [french.translate(context[i:(i + 1023)]) for i in range(0, len(context), 1023)]
 
-    de2en = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.fr-en',
+    english = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.fr-en',
                            tokenizer='moses', bpe='subword_nmt')
 
-    return [de2en.translate(translated[i:(i + 1023)]) for i in range(0, len(translated), 1023)]
+    return [english.translate(translated[i:(i + 1023)]) for i in range(0, len(translated), 1023)]
 
 
 def load_pickle(path):

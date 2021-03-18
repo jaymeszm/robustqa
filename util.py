@@ -304,11 +304,98 @@ class MLMDataset(Dataset):
     def __len__(self):
         return len(self.encodings['input_ids'])
 
+<<<<<<< HEAD
 def read_squad(path, split_name, augmentation):
+=======
+class MLMDataset(Dataset):
+    def __init__(self, encodings):
+        self.encodings = encodings
+        self.keys = ['input_ids', 'attention_mask', 'labels']
+        assert(all(key in self.encodings for key in self.keys))
+
+    def __getitem__(self, idx):
+        return {key : self.encodings[key][idx].detach().clone() for key in self.keys}
+
+    def __len__(self):
+        return len(self.encodings['input_ids'])
+
+def encode_context_data(tokenizer, dir_name, dataset_name, max_len):
+    """tokenize and save encodings for masked language modeling training"""
+    path = f'{dir_name}/{dataset_name}_context.txt'
+    with open(path) as f:
+        sentences = f.readlines()
+    corpus = [s.strip() for s in sentences]
+    encodings = tokenizer(corpus,
+                          truncation=True,
+                          max_length=max_len,
+                          padding='max_length',
+                          return_special_tokens_mask=True,
+                          return_tensors="pt")
+    # cache_path = f'{dir_name}/{dataset_name}_context_encodings.pt'
+    # save_pickle(encodings, cache_path)
+    return encodings
+
+def mask_train_data(encodings, tokenizer, mask_prob, mask_type):
+    """ Take batch encodings and mask out tokens given by mlm probability """
+    labels = encodings['input_ids'].detach().clone() #a tensor of shape b x seq_length
+
+    if mask_type == 'basic':
+        # each token has mask_prob of being masked
+        prob_matrix = torch.full_like(labels, mask_prob, dtype=torch.float)
+        # set prob for special tokens to 0
+        prob_matrix.masked_fill_(encodings['special_tokens_mask'] > 0, 0.0)
+        # make boolean matrix of 0 (no mask) and 1 (mask)
+        mask_matrix = torch.bernoulli(prob_matrix).bool()
+        # set all masked tokens to [MASK]
+        encodings['input_ids'][mask_matrix] = tokenizer.mask_token_id
+    elif mask_type == 'bert':
+        # 80% of the time replace with MASK, 10% random words, 10% original
+        prob_matrix = torch.full_like(labels, mask_prob, dtype=torch.float)
+        prob_matrix.masked_fill_(encodings['special_tokens_mask'] > 0, 0.0)
+        mask_matrix = torch.bernoulli(prob_matrix).bool()
+        mask_replace = mask_matrix & torch.bernoulli(torch.full_like(labels, 0.8, dtype=torch.float)).bool()
+        encodings['input_ids'][mask_replace] = tokenizer.mask_token_id
+
+        random_replace = mask_matrix & (~mask_replace) & torch.bernoulli(torch.full_like(labels, 0.5, dtype=torch.float)).bool()
+        random_tokens = torch.randint_like(labels, len(tokenizer), dtype=torch.long)
+        encodings['input_ids'][random_replace] = random_tokens[random_replace]
+
+    # elif mask_type == 'span':
+    #     m = Geometric(torch.tensor([0.2])) # initiate geometric distribution with p=0.2
+    #     for input_ids in encodings['input_ids']:
+    #         sep_idx = input_ids.index(tokenizer.sep_token_id)
+    #         mask_len = int(mask_prob * (sep_idx-1)) # target number of masked tokens
+    #         total_span_len = 0
+    #         while total_span_len < mask_len:
+    #             span_len = min(np.random.geometric(p=0.2), 10) #cap max span length to 10
+    #             span_start_idx = random.randint(1, sep_idx-1)
+    #             input_ids[span_start_idx:min(span_start_idx+span_len, sep_idx)] = tokenizer.mask_token_id
+    #             total_span_len += span_len
+
+    # set labels for non-masked tokens to -100
+    labels[~mask_matrix] = -100
+    encodings['labels'] = labels
+    return encodings
+
+def save_context(data_dir, datasets, dataset_name):
+    """ Create txt file of contexts from SQuAD formatted datasets """
+    save_path = f'{data_dir}/{dataset_name}' + '_context.txt'
+    with open(Path(save_path), 'w') as context:
+        for dataset in datasets:
+            input = Path(f'{data_dir}/{dataset}')
+            with open(input, 'rb') as f:
+                squad_dict = json.load(f)
+            for group in squad_dict['data']:
+                for passage in group['paragraphs']:
+                    context.write(passage['context'].replace('\n', '')+'\n')
+
+def read_squad(path):
+>>>>>>> b4852b9517ee1f4270ce935326feb075a7d135ca
     path = Path(path)
     with open(path, 'rb') as f:
         squad_dict = json.load(f)
     data_dict = {'question': [], 'context': [], 'id': [], 'answer': []}
+<<<<<<< HEAD
     augment = False
     if augmentation:
         augment = True
@@ -331,6 +418,19 @@ def read_squad(path, split_name, augmentation):
                     if augment and i == 1:
                         question = back_translate(question, "en", "fr")
                     if len(qa['answers']) == 0:
+=======
+    for group in squad_dict['data']:
+        for passage in group['paragraphs']:
+            context = passage['context']
+            for qa in passage['qas']:
+                question = qa['question']
+                if len(qa['answers']) == 0:
+                    data_dict['question'].append(question)
+                    data_dict['context'].append(context)
+                    data_dict['id'].append(qa['id'])
+                else:
+                    for answer in qa['answers']:
+>>>>>>> b4852b9517ee1f4270ce935326feb075a7d135ca
                         data_dict['question'].append(question)
                         data_dict['context'].append(context)
                         data_dict['id'].append(qa['id'])

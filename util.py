@@ -38,10 +38,10 @@ def get_synonyms(word):
     return synonyms
 
 
-def synonym_replacement(sent):
-    n = int(len(sent) * .1)
-    new_sentence = sent.copy()
-    potential_words = [word for word in sent if word not in stopwords.words('english')]
+def synonym_substitution(sentence):
+    n = int(len(sentence) * .1)
+    new_sentence = sentence.copy()
+    potential_words = [word for word in sentence if word not in stopwords.words('english')]
     words_to_change = random.sample(potential_words, n)
     for word in words_to_change:
         synonyms = get_synonyms(word)
@@ -71,7 +71,7 @@ def random_swap(sent):
 def data_augmentation(sentence, probability):
     sentence_alt = ''.join([i for i in sentence.lower() if i not in punctuation])
     sent = sentence_alt.split()
-    return random_swap(synonym_replacement(sent))
+    return random_swap(synonym_substitution(sent))
 
 
 def download(model_name):
@@ -80,11 +80,8 @@ def download(model_name):
     model = model.to(device)
     return tokenizer, model
 
-# download model for English -> Spanish
-tmp_lang_tokenizer, tmp_lang_model = download(f'Helsinki-NLP/opus-mt-en-ROMANCE')
-# download model for Spanish -> English
-src_lang_tokenizer, src_lang_model = download(f'Helsinki-NLP/opus-mt-ROMANCE-en')
-
+french_lang_tokenizer, french_lang_model = download(f'Helsinki-NLP/opus-mt-en-ROMANCE')
+english_lang_tokenizer, english_lang_model = download(f'Helsinki-NLP/opus-mt-ROMANCE-en')
 
 def translate(texts, model, tokenizer, language):
     translations = []
@@ -101,16 +98,15 @@ def translate(texts, model, tokenizer, language):
     return " ".join(translations)
 
 
-def back_translate(texts, language_src, language_dst):
-    translated = translate(texts, tmp_lang_model, tmp_lang_tokenizer, language_dst)
-    back_translated = translate(translated, src_lang_model, src_lang_tokenizer, language_src)
+def back_translate(texts, english, french):
+    translated = translate(texts, french_lang_model, french_lang_tokenizer, french)
+    back_translated = translate(translated, english_lang_model, english_lang_tokenizer, english)
     return back_translated
 
 
 def back_translator(context):
     french = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.en-fr',
                            tokenizer='moses', bpe='subword_nmt')
-    # Batched translation
     translated = [french.translate(context[i:(i + 1023)]) for i in range(0, len(context), 1023)]
 
     english = torch.hub.load('pytorch/fairseq', 'transformer.wmt14.fr-en',
